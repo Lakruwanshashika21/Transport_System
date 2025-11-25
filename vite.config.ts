@@ -7,6 +7,10 @@ export default defineConfig({
   resolve: {
     extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
     alias: {
+      // THE FIX: Use path.resolve('src') instead of __dirname to avoid Linux crashes
+      '@': path.resolve('src'), 
+      
+      // Keeping all your specific aliases to ensure components work
       'vaul@1.1.2': 'vaul',
       'sonner@2.0.3': 'sonner',
       'recharts@2.15.2': 'recharts',
@@ -45,12 +49,11 @@ export default defineConfig({
       '@radix-ui/react-aspect-ratio@1.1.2': '@radix-ui/react-aspect-ratio',
       '@radix-ui/react-alert-dialog@1.1.6': '@radix-ui/react-alert-dialog',
       '@radix-ui/react-accordion@1.2.3': '@radix-ui/react-accordion',
-      '@': path.resolve(__dirname, './src'),
     },
   },
   build: {
-    target: 'esnext',
-    outDir: 'dist', // <--- CHANGED FROM 'build' TO 'dist'
+    // Ensuring output is 'dist' to match Vercel defaults
+    outDir: 'dist',
   },
   server: {
     port: 3000,
