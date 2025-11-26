@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { Mail, Lock, Car, Eye, EyeOff } from 'lucide-react';
 import { User } from '../../App';
+// Firebase Imports
+import { signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db, googleProvider } from '../../firebase'; // Adjust path if needed
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -11,37 +15,89 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
   const [loginType, setLoginType] = useState<'user' | 'driver' | 'admin'>('user');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [epfNumber, setEpfNumber] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  
+  // UI Feedback
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Helper to fetch user details from Firestore
+  const fetchUserDetails = async (uid: string) => {
+    const userDoc = await getDoc(doc(db, "users", uid));
     
-    // Mock login
-    const mockUser: User = {
-      id: '1',
-      name: loginType === 'user' ? 'John Doe' : loginType === 'driver' ? 'Mike Wilson' : 'Admin User',
-      email: email || 'user@example.com',
-      role: loginType,
-      epfNumber: loginType === 'user' ? (epfNumber || 'EPF12345') : undefined,
-      phone: '+94 77 123 4567',
-    };
-    
-    onLogin(mockUser);
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      
+      // Security Check: Ensure they are logging into the correct panel
+      if (userData.role !== loginType) {
+        throw new Error(`Access Denied: You are registered as a ${userData.role}, but trying to login as ${loginType}.`);
+      }
+
+      // Check for Driver Approval
+      if (loginType === 'driver' && userData.driverStatus === 'pending') {
+        throw new Error('Your driver account is pending approval by an admin.');
+      }
+      if (loginType === 'driver' && userData.driverStatus === 'rejected') {
+        throw new Error('Your driver account application was rejected.');
+      }
+
+      return {
+        id: uid,
+        name: userData.fullName || userData.email, // Fallback to email if name missing
+        email: userData.email,
+        role: userData.role,
+        phone: userData.phone,
+        ...userData // Spread other fields like epfNumber etc.
+      } as User;
+    } else {
+      throw new Error('User profile not found. Please register first.');
+    }
   };
 
-  const handleGoogleLogin = () => {
-    // Mock Google login
-    const mockUser: User = {
-      id: '1',
-      name: 'John Doe',
-      email: 'john.doe@gmail.com',
-      role: loginType,
-      epfNumber: loginType === 'user' ? 'EPF12345' : undefined,
-      phone: '+94 77 123 4567',
-    };
-    
-    onLogin(mockUser);
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      // 1. Authenticate with Firebase
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      
+      // 2. Fetch Extra Data & Verify Role
+      const appUser = await fetchUserDetails(userCredential.user.uid);
+      
+      // 3. Log In
+      onLogin(appUser);
+
+    } catch (err: any) {
+      console.error(err);
+      if (err.code === 'auth/invalid-credential') {
+        setError('Invalid email or password.');
+      } else {
+        setError(err.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setError('');
+    setLoading(true);
+
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      
+      // Fetch details and check if they actually registered
+      const appUser = await fetchUserDetails(result.user.uid);
+      
+      onLogin(appUser);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'Google sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -67,6 +123,13 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
               <h1 className="text-2xl text-gray-900 mb-2">Welcome Back</h1>
               <p className="text-gray-600">Sign in to continue to your account</p>
             </div>
+
+            {/* Error Message */}
+            {error && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg text-center">
+                {error}
+              </div>
+            )}
 
             {/* Role Selector */}
             <div className="flex gap-2 mb-6">
@@ -109,7 +172,8 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
             <button
               type="button"
               onClick={handleGoogleLogin}
-              className="w-full flex items-center justify-center gap-3 px-4 py-3 border-2 border-gray-300 rounded-xl hover:bg-gray-50 transition-all mb-6"
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-3 px-4 py-3 border-2 border-gray-300 rounded-xl hover:bg-gray-50 transition-all mb-6 disabled:opacity-50"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24">
                 <path
@@ -143,43 +207,29 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
 
             {/* Login Form */}
             <form onSubmit={handleLogin} className="space-y-4">
-              {loginType === 'user' && (
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">EPF Number</label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={epfNumber}
-                      onChange={(e) => setEpfNumber(e.target.value)}
-                      placeholder="EPF12345"
-                      className="w-full px-4 py-3 pl-11 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
-                    />
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                  </div>
+              
+              {/* Unified Email Input (Replaced EPF logic with Email for simplicity/Firebase compatibility) */}
+              <div>
+                <label className="block text-sm text-gray-700 mb-2">Email Address</label>
+                <div className="relative">
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder={loginType === 'user' ? "user@example.com" : "you@example.com"}
+                    className="w-full px-4 py-3 pl-11 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
+                  />
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                 </div>
-              )}
-
-              {loginType !== 'user' && (
-                <div>
-                  <label className="block text-sm text-gray-700 mb-2">Email Address</label>
-                  <div className="relative">
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="you@example.com"
-                      className="w-full px-4 py-3 pl-11 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
-                    />
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                  </div>
-                </div>
-              )}
+              </div>
 
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Password</label>
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
+                    required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
@@ -208,9 +258,10 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
 
               <button
                 type="submit"
-                className="w-full py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all"
+                disabled={loading}
+                className="w-full py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all disabled:opacity-50"
               >
-                Sign In
+                {loading ? 'Signing in...' : 'Sign In'}
               </button>
             </form>
 
@@ -235,7 +286,7 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
           </div>
 
           <p className="text-center text-xs text-gray-500 mt-6">
-            © 2025 Company Transport System. All rights reserved.
+            © 2025 Eskimo Company Transport System. All rights reserved.
           </p>
         </div>
       </div>

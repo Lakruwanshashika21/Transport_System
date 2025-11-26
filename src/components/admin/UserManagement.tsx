@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, User as UserIcon, Mail, Phone, IdCard, Calendar } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
+// Firebase Imports
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface UserManagementProps {
   user: User;
@@ -10,52 +13,77 @@ interface UserManagementProps {
   onLogout: () => void;
 }
 
-const users = [
-  { 
-    id: '1', 
-    name: 'John Doe', 
-    email: 'john.doe@company.com', 
-    epf: 'EPF12345', 
-    phone: '+94 77 123 4567',
-    department: 'Marketing',
-    joinDate: '2023-01-15',
-    totalTrips: 24
-  },
-  { 
-    id: '2', 
-    name: 'Jane Smith', 
-    email: 'jane.smith@company.com', 
-    epf: 'EPF67890', 
-    phone: '+94 77 234 5678',
-    department: 'Sales',
-    joinDate: '2022-08-20',
-    totalTrips: 38
-  },
-  { 
-    id: '3', 
-    name: 'Robert Chen', 
-    email: 'robert.chen@company.com', 
-    epf: 'EPF54321', 
-    phone: '+94 77 456 7890',
-    department: 'IT',
-    joinDate: '2024-03-10',
-    totalTrips: 12
-  },
-];
-
 export function UserManagement({ user, onNavigate, onLogout }: UserManagementProps) {
+  // 1. State
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchType, setSearchType] = useState<'epf' | 'name' | 'email'>('epf');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<any>(null);
 
+  // 2. Fetch Data
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // A. Fetch Users (Role = 'user')
+        const usersQuery = query(collection(db, "users"), where("role", "==", "user"));
+        const usersSnapshot = await getDocs(usersQuery);
+        const usersList = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        // B. Fetch Trips (to calculate stats)
+        // Optimization: In a real large app, you might store a 'tripCount' on the user document 
+        // instead of fetching all trips here. For now, this works fine.
+        const tripsSnapshot = await getDocs(collection(db, "trip_requests"));
+        const allTrips = tripsSnapshot.docs.map(doc => doc.data());
+
+        // C. Merge Data
+        const usersWithStats = usersList.map((u: any) => {
+          // Count trips where this user is the customer
+          // (Checks by ID, Email, or Name to be safe)
+          const userTrips = allTrips.filter((t: any) => 
+            t.customer === u.name || 
+            t.email === u.email || 
+            (u.uid && t.userId === u.uid)
+          );
+
+          return {
+            ...u,
+            totalTrips: userTrips.length,
+            // Handle missing fields gracefully
+            department: u.department || 'General',
+            joinDate: u.createdAt ? new Date(u.createdAt).toISOString().split('T')[0] : 'Unknown'
+          };
+        });
+
+        setUsers(usersWithStats);
+        setLoading(false);
+      } catch (error) {
+        console.error("Error fetching users:", error);
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
   const filteredUsers = users.filter((u) => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
-    if (searchType === 'epf') return u.epf.toLowerCase().includes(query);
-    if (searchType === 'name') return u.name.toLowerCase().includes(query);
-    if (searchType === 'email') return u.email.toLowerCase().includes(query);
+    
+    // Robust checking for fields that might be missing
+    if (searchType === 'epf') return (u.epfNumber || u.epf || '').toLowerCase().includes(query);
+    if (searchType === 'name') return (u.name || '').toLowerCase().includes(query);
+    if (searchType === 'email') return (u.email || '').toLowerCase().includes(query);
     return true;
   });
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F9FAFB] flex items-center justify-center">
+        <div className="text-gray-500">Loading Users...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -122,11 +150,11 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
                     <UserIcon className="w-6 h-6 text-gray-600" />
                   </div>
                   <div className="flex-1">
-                    <div className="text-lg text-gray-900 mb-1">{u.name}</div>
+                    <div className="text-lg text-gray-900 mb-1">{u.name || 'Unknown Name'}</div>
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 text-sm text-gray-600">
                         <IdCard className="w-4 h-4 text-gray-400" />
-                        {u.epf}
+                        {u.epfNumber || u.epf || 'No EPF'}
                       </div>
                       <div className="flex items-center gap-2 text-sm text-gray-600">
                         <Mail className="w-4 h-4 text-gray-400" />
@@ -134,7 +162,7 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
                       </div>
                       <div className="flex items-center gap-2 text-sm text-gray-600">
                         <Phone className="w-4 h-4 text-gray-400" />
-                        {u.phone}
+                        {u.phone || 'No Phone'}
                       </div>
                     </div>
                   </div>
@@ -145,6 +173,12 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
                 </div>
               </Card>
             ))}
+
+            {filteredUsers.length === 0 && (
+              <div className="p-8 text-center text-gray-500 bg-white rounded-xl">
+                No users found matching your search.
+              </div>
+            )}
           </div>
 
           {/* User Details */}
@@ -167,7 +201,7 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
                 <div className="space-y-4">
                   <div className="p-4 bg-gray-50 rounded-xl">
                     <div className="text-xs text-gray-500 mb-1">EPF Number</div>
-                    <div className="text-gray-900">{selectedUser.epf}</div>
+                    <div className="text-gray-900">{selectedUser.epfNumber || selectedUser.epf || '-'}</div>
                   </div>
 
                   <div className="p-4 bg-gray-50 rounded-xl">
@@ -177,7 +211,7 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
 
                   <div className="p-4 bg-gray-50 rounded-xl">
                     <div className="text-xs text-gray-500 mb-1">Phone</div>
-                    <div className="text-gray-900">{selectedUser.phone}</div>
+                    <div className="text-gray-900">{selectedUser.phone || '-'}</div>
                   </div>
 
                   <div className="p-4 bg-gray-50 rounded-xl">

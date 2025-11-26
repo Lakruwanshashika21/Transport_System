@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Car, Plus, Edit, Wrench } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
+// Firebase Imports
+import { collection, getDocs, addDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface VehicleManagementProps {
   user: User;
@@ -11,14 +14,10 @@ interface VehicleManagementProps {
   onLogout: () => void;
 }
 
-const vehicles = [
-  { id: '1', number: 'CAB-2345', model: 'Toyota Corolla', type: 'Sedan', seats: 4, status: 'available' as const, lastService: '2025-11-01' },
-  { id: '2', number: 'VAN-5678', model: 'Toyota Hiace', type: 'Van', seats: 12, status: 'in-use' as const, lastService: '2025-10-15' },
-  { id: '3', number: 'CAR-1234', model: 'Honda Civic', type: 'Sedan', seats: 4, status: 'available' as const, lastService: '2025-10-28' },
-  { id: '4', number: 'SUV-9012', model: 'Mitsubishi Montero', type: 'SUV', seats: 7, status: 'maintenance' as const, lastService: '2025-11-10' },
-];
-
 export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagementProps) {
+  // 1. State
+  const [vehicles, setVehicles] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [formData, setFormData] = useState({
     number: '',
@@ -27,15 +26,57 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     seats: '',
   });
 
-  const handleAddVehicle = () => {
+  // 2. Fetch Data
+  const fetchData = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, "vehicles"));
+      const vehicleList = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setVehicles(vehicleList);
+      setLoading(false);
+    } catch (error) {
+      console.error("Error fetching vehicles:", error);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // 3. Add Vehicle Handler
+  const handleAddVehicle = async () => {
     if (!formData.number || !formData.model || !formData.type || !formData.seats) {
       alert('Please fill all fields');
       return;
     }
-    alert('Vehicle added successfully!');
-    setShowAddModal(false);
-    setFormData({ number: '', model: '', type: '', seats: '' });
+
+    try {
+      await addDoc(collection(db, "vehicles"), {
+        number: formData.number,
+        model: formData.model,
+        type: formData.type,
+        seats: parseInt(formData.seats),
+        status: 'available', // Default status
+        lastService: new Date().toISOString().split('T')[0], // Default to today for demo
+        createdAt: new Date().toISOString()
+      });
+
+      alert('Vehicle added successfully!');
+      setShowAddModal(false);
+      setFormData({ number: '', model: '', type: '', seats: '' });
+      fetchData(); // Refresh list
+    } catch (error) {
+      console.error("Error adding vehicle:", error);
+      alert("Failed to add vehicle");
+    }
   };
+
+  if (loading) {
+    return <div className="p-10 text-center">Loading Fleet...</div>;
+  }
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -111,30 +152,38 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {vehicles.map((vehicle) => (
-                  <tr key={vehicle.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                          <Car className="w-5 h-5 text-gray-600" />
-                        </div>
-                        <div className="text-gray-900">{vehicle.number}</div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-gray-900">{vehicle.model}</td>
-                    <td className="px-6 py-4 text-gray-600">{vehicle.type}</td>
-                    <td className="px-6 py-4 text-gray-600">{vehicle.seats}</td>
-                    <td className="px-6 py-4">
-                      <Badge status={vehicle.status} size="sm" />
-                    </td>
-                    <td className="px-6 py-4 text-gray-600">{vehicle.lastService}</td>
-                    <td className="px-6 py-4">
-                      <button className="p-2 hover:bg-gray-100 rounded-lg transition-all">
-                        <Edit className="w-4 h-4 text-gray-600" />
-                      </button>
+                {vehicles.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                      No vehicles found. Add one to get started.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  vehicles.map((vehicle) => (
+                    <tr key={vehicle.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                            <Car className="w-5 h-5 text-gray-600" />
+                          </div>
+                          <div className="text-gray-900">{vehicle.number}</div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-gray-900">{vehicle.model}</td>
+                      <td className="px-6 py-4 text-gray-600">{vehicle.type}</td>
+                      <td className="px-6 py-4 text-gray-600">{vehicle.seats}</td>
+                      <td className="px-6 py-4">
+                        <Badge status={vehicle.status} size="sm" />
+                      </td>
+                      <td className="px-6 py-4 text-gray-600">{vehicle.lastService || 'N/A'}</td>
+                      <td className="px-6 py-4">
+                        <button className="p-2 hover:bg-gray-100 rounded-lg transition-all">
+                          <Edit className="w-4 h-4 text-gray-600" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -181,6 +230,8 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                   <option value="Sedan">Sedan</option>
                   <option value="Van">Van</option>
                   <option value="SUV">SUV</option>
+                  <option value="Bus">Bus</option>
+                  <option value="Lorry">Lorry</option>
                 </select>
               </div>
 
@@ -199,13 +250,13 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
             <div className="flex gap-3">
               <button
                 onClick={() => setShowAddModal(false)}
-                className="flex-1 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all"
+                className="flex-1 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleAddVehicle}
-                className="flex-1 py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all"
+                className="flex-1 py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF]"
               >
                 Add Vehicle
               </button>

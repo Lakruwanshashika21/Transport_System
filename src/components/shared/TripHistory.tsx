@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, Calendar, Car, User as UserIcon, MapPin, Download, Filter } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from './TopNav';
 import { Card } from './Card';
 import { Badge } from './Badge';
+// Firebase Imports
+import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface TripHistoryProps {
   user: User;
@@ -11,80 +14,9 @@ interface TripHistoryProps {
   onLogout: () => void;
 }
 
-const allTrips = [
-  {
-    id: 'TRP001',
-    date: '2025-11-20',
-    time: '09:00 AM',
-    vehicle: 'CAB-2345',
-    driver: 'Mike Wilson',
-    customer: 'John Doe',
-    epf: 'EPF12345',
-    pickup: 'Office Building A',
-    destination: 'Client Meeting - Downtown',
-    distance: '12.5 km',
-    cost: 'LKR 1,500',
-    status: 'completed' as const,
-  },
-  {
-    id: 'TRP002',
-    date: '2025-11-21',
-    time: '02:00 PM',
-    vehicle: 'VAN-5678',
-    driver: 'Sarah Johnson',
-    customer: 'Jane Smith',
-    epf: 'EPF67890',
-    pickup: 'Main Office',
-    destination: 'Airport Terminal',
-    distance: '35.2 km',
-    cost: 'LKR 4,200',
-    status: 'completed' as const,
-  },
-  {
-    id: 'TRP003',
-    date: '2025-11-22',
-    time: '10:30 AM',
-    vehicle: 'CAR-1234',
-    driver: 'David Miller',
-    customer: 'Robert Chen',
-    epf: 'EPF54321',
-    pickup: 'Branch Office',
-    destination: 'Conference Center',
-    distance: '18.5 km',
-    cost: 'LKR 2,200',
-    status: 'completed' as const,
-  },
-  {
-    id: 'TRP004',
-    date: '2025-11-23',
-    time: '11:00 AM',
-    vehicle: 'CAB-2345',
-    driver: 'Mike Wilson',
-    customer: 'Emily Brown',
-    epf: 'EPF98765',
-    pickup: 'Head Office',
-    destination: 'Shopping Mall',
-    distance: '8.3 km',
-    cost: 'LKR 1,000',
-    status: 'completed' as const,
-  },
-  {
-    id: 'TRP005',
-    date: '2025-11-24',
-    time: '03:30 PM',
-    vehicle: 'VAN-5678',
-    driver: 'Sarah Johnson',
-    customer: 'John Doe',
-    epf: 'EPF12345',
-    pickup: 'Office Complex',
-    destination: 'Training Center',
-    distance: '22.1 km',
-    cost: 'LKR 2,650',
-    status: 'cancelled' as const,
-  },
-];
-
 export function TripHistory({ user, onNavigate, onLogout }: TripHistoryProps) {
+  const [trips, setTrips] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     vehicleNumber: '',
     epfNumber: '',
@@ -92,20 +24,70 @@ export function TripHistory({ user, onNavigate, onLogout }: TripHistoryProps) {
   });
   const [selectedTrip, setSelectedTrip] = useState<any>(null);
 
-  const filteredTrips = allTrips.filter((trip) => {
-    if (filters.vehicleNumber && !trip.vehicle.toLowerCase().includes(filters.vehicleNumber.toLowerCase())) return false;
-    if (filters.epfNumber && !trip.epf.toLowerCase().includes(filters.epfNumber.toLowerCase())) return false;
-    if (filters.dateRange && trip.date !== filters.dateRange) return false;
+  // 1. Fetch Data based on Role
+  useEffect(() => {
+    const fetchTrips = async () => {
+      try {
+        let q;
+        const tripsRef = collection(db, "trip_requests");
+
+        // Define query based on role
+        if (user.role === 'admin') {
+          // Admin sees all trips
+          q = query(tripsRef, orderBy('date', 'desc')); // Requires Firestore Index, or remove orderBy if it fails initially
+        } else if (user.role === 'driver') {
+          // Driver sees only their assigned trips
+          q = query(tripsRef, where('driverId', '==', user.id));
+        } else {
+          // User sees only their requested trips
+          // checking 'userId' matching their auth UID
+          q = query(tripsRef, where('userId', '==', user.id));
+        }
+
+        // Fallback if complex query fails (e.g. missing index): just get all and filter in JS
+        // For this demo, let's try the specific query first.
+        // Note: 'orderBy' with 'where' requires a composite index in Firestore. 
+        // If you get an error in console, create the index via the link provided in the error.
+        
+        const querySnapshot = await getDocs(q);
+        const fetchedTrips = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+
+        // Client-side sort if server-side sort wasn't applied (to handle simple query fallbacks)
+        fetchedTrips.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+        setTrips(fetchedTrips);
+        setLoading(false);
+      } catch (error) {
+        console.error("Error fetching trip history:", error);
+        setLoading(false);
+      }
+    };
+
+    fetchTrips();
+  }, [user]);
+
+  // 2. Client-Side Filtering
+  const filteredTrips = trips.filter((trip) => {
+    const vehicle = trip.vehicleNumber || trip.vehicle || '';
+    const epf = trip.epfNumber || trip.epf || '';
     
-    // For users, only show their trips
-    if (user.role === 'user' && trip.epf !== user.epfNumber) return false;
+    if (filters.vehicleNumber && !vehicle.toLowerCase().includes(filters.vehicleNumber.toLowerCase())) return false;
+    if (filters.epfNumber && !epf.toLowerCase().includes(filters.epfNumber.toLowerCase())) return false;
+    if (filters.dateRange && trip.date !== filters.dateRange) return false;
     
     return true;
   });
 
   const handleDownloadPDF = (trip: any) => {
-    alert(`Downloading PDF for trip ${trip.id}`);
+    alert(`Downloading PDF for trip ${trip.id}... (Feature coming soon)`);
   };
+
+  if (loading) {
+    return <div className="p-10 text-center">Loading Trip History...</div>;
+  }
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -139,6 +121,7 @@ export function TripHistory({ user, onNavigate, onLogout }: TripHistoryProps) {
               </div>
             </div>
 
+            {/* Only Admins or Drivers usually need to search by EPF to find specific employees */}
             {user.role !== 'user' && (
               <div>
                 <label className="block text-sm text-gray-700 mb-2">EPF Number</label>
@@ -234,16 +217,16 @@ export function TripHistory({ user, onNavigate, onLogout }: TripHistoryProps) {
                   <div className="space-y-2">
                     <div className="text-sm">
                       <span className="text-gray-500">Vehicle:</span>
-                      <span className="text-gray-900 ml-2">{trip.vehicle}</span>
+                      <span className="text-gray-900 ml-2">{trip.vehicleNumber || trip.vehicle || 'Pending'}</span>
                     </div>
                     <div className="text-sm">
                       <span className="text-gray-500">Driver:</span>
-                      <span className="text-gray-900 ml-2">{trip.driver}</span>
+                      <span className="text-gray-900 ml-2">{trip.driverName || trip.driver || 'Pending'}</span>
                     </div>
                     {user.role !== 'user' && (
                       <div className="text-sm">
                         <span className="text-gray-500">Customer:</span>
-                        <span className="text-gray-900 ml-2">{trip.customer}</span>
+                        <span className="text-gray-900 ml-2">{trip.customerName || trip.customer}</span>
                       </div>
                     )}
                   </div>
@@ -296,30 +279,30 @@ export function TripHistory({ user, onNavigate, onLogout }: TripHistoryProps) {
 
                   <div className="p-4 bg-gray-50 rounded-xl">
                     <div className="text-xs text-gray-500 mb-1">Vehicle</div>
-                    <div className="text-gray-900">{selectedTrip.vehicle}</div>
+                    <div className="text-gray-900">{selectedTrip.vehicleNumber || selectedTrip.vehicle || 'Not assigned'}</div>
                   </div>
 
                   <div className="p-4 bg-gray-50 rounded-xl">
                     <div className="text-xs text-gray-500 mb-1">Driver</div>
-                    <div className="text-gray-900">{selectedTrip.driver}</div>
+                    <div className="text-gray-900">{selectedTrip.driverName || selectedTrip.driver || 'Not assigned'}</div>
                   </div>
 
                   {user.role !== 'user' && (
                     <div className="p-4 bg-gray-50 rounded-xl">
                       <div className="text-xs text-gray-500 mb-1">Customer</div>
-                      <div className="text-gray-900">{selectedTrip.customer}</div>
-                      <div className="text-sm text-gray-600">{selectedTrip.epf}</div>
+                      <div className="text-gray-900">{selectedTrip.customerName || selectedTrip.customer}</div>
+                      <div className="text-sm text-gray-600">{selectedTrip.epfNumber || selectedTrip.epf}</div>
                     </div>
                   )}
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="p-4 bg-gray-50 rounded-xl">
                       <div className="text-xs text-gray-500 mb-1">Distance</div>
-                      <div className="text-gray-900">{selectedTrip.distance}</div>
+                      <div className="text-gray-900">{selectedTrip.distance || '-'}</div>
                     </div>
                     <div className="p-4 bg-gray-50 rounded-xl">
                       <div className="text-xs text-gray-500 mb-1">Cost</div>
-                      <div className="text-gray-900">{selectedTrip.cost}</div>
+                      <div className="text-gray-900">{selectedTrip.cost || '-'}</div>
                     </div>
                   </div>
 

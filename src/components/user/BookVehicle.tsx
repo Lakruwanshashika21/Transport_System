@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MapPin, Calendar, Clock, Car, Check, Navigation, ArrowRight } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
+// Firebase Imports
+import { collection, getDocs, addDoc, query, where } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface BookVehicleProps {
   user: User;
@@ -13,30 +16,78 @@ interface BookVehicleProps {
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
-const availableVehicles = [
-  { id: '1', number: 'CAB-2345', model: 'Toyota Corolla', type: 'Sedan', seats: 4, status: 'available' as const },
-  { id: '2', number: 'VAN-5678', model: 'Toyota Hiace', type: 'Van', seats: 12, status: 'available' as const },
-  { id: '3', number: 'CAR-1234', model: 'Honda Civic', type: 'Sedan', seats: 4, status: 'available' as const },
-  { id: '4', number: 'SUV-9012', model: 'Mitsubishi Montero', type: 'SUV', seats: 7, status: 'in-use' as const },
-];
-
 export function BookVehicle({ user, onNavigate, onLogout }: BookVehicleProps) {
   const [currentStep, setCurrentStep] = useState<Step>(1);
+  const [availableVehicles, setAvailableVehicles] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  
   const [bookingData, setBookingData] = useState({
     pickup: '',
     destination: '',
     date: '',
     time: '',
     vehicleId: '',
+    distance: '12.5 km', // Mock calculated data
+    cost: 'LKR 1,500',   // Mock calculated data
   });
 
+  // 1. Fetch Available Vehicles
+  useEffect(() => {
+    const fetchVehicles = async () => {
+      try {
+        const q = query(collection(db, "vehicles"), where("status", "==", "available"));
+        const querySnapshot = await getDocs(q);
+        const vehicles = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAvailableVehicles(vehicles);
+      } catch (error) {
+        console.error("Error fetching vehicles:", error);
+      }
+    };
+    fetchVehicles();
+  }, []);
+
   const handleUseCurrentLocation = () => {
-    setBookingData({ ...bookingData, pickup: 'Main Office Building, Colombo 03' });
+    // In a real app, use navigator.geolocation
+    setBookingData({ ...bookingData, pickup: 'Current Location (GPS)' });
   };
 
-  const handleBooking = () => {
-    alert('Booking request submitted successfully! Waiting for admin approval.');
-    onNavigate('user-dashboard');
+  const handleBooking = async () => {
+    setLoading(true);
+    try {
+      // 2. Create Trip Request in Firestore
+      await addDoc(collection(db, "trip_requests"), {
+        userId: user.id,
+        customer: user.name,
+        customerPhone: user.phone || 'N/A',
+        email: user.email,
+        epf: user.epfNumber || 'N/A',
+        
+        pickup: bookingData.pickup,
+        destination: bookingData.destination,
+        date: bookingData.date,
+        time: bookingData.time,
+        
+        // We store vehicle preference, but admin assigns final vehicle usually. 
+        // However, if user selects specific vehicle, we record it.
+        requestedVehicleId: bookingData.vehicleId,
+        
+        // Mock Data (In real app, calculate this via Google Maps API)
+        distance: bookingData.distance,
+        cost: bookingData.cost,
+        estimatedDuration: '25 mins',
+        
+        status: 'pending',
+        requestedAt: new Date().toISOString(),
+      });
+
+      alert('Booking request submitted successfully! You can track it in your Dashboard.');
+      onNavigate('user-dashboard');
+    } catch (error) {
+      console.error("Error creating booking:", error);
+      alert("Failed to submit booking. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const steps = [
@@ -46,6 +97,8 @@ export function BookVehicle({ user, onNavigate, onLogout }: BookVehicleProps) {
     { number: 4, label: 'Vehicle' },
     { number: 5, label: 'Confirm' },
   ];
+
+  const selectedVehicle = availableVehicles.find(v => v.id === bookingData.vehicleId);
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -163,7 +216,7 @@ export function BookVehicle({ user, onNavigate, onLogout }: BookVehicleProps) {
                 <div className="text-center">
                   <MapPin className="w-12 h-12 text-[#2563EB] mx-auto mb-2" />
                   <p className="text-gray-500">Route Preview</p>
-                  <p className="text-sm text-gray-400">Distance: 12.5 km • Est. Time: 25 min</p>
+                  <p className="text-sm text-gray-400">Distance: {bookingData.distance} • Est. Time: 25 min</p>
                 </div>
               </div>
 
@@ -172,11 +225,11 @@ export function BookVehicle({ user, onNavigate, onLogout }: BookVehicleProps) {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-sm text-gray-600">Estimated Distance</div>
-                      <div className="text-lg text-gray-900">12.5 km</div>
+                      <div className="text-lg text-gray-900">{bookingData.distance}</div>
                     </div>
                     <div>
                       <div className="text-sm text-gray-600">Estimated Cost</div>
-                      <div className="text-lg text-gray-900">LKR 1,500</div>
+                      <div className="text-lg text-gray-900">{bookingData.cost}</div>
                     </div>
                   </div>
                 </div>
@@ -257,41 +310,43 @@ export function BookVehicle({ user, onNavigate, onLogout }: BookVehicleProps) {
           {/* Step 4: Vehicle Selection */}
           {currentStep === 4 && (
             <div>
-              <h2 className="text-xl text-gray-900 mb-6">Select Vehicle</h2>
+              <h2 className="text-xl text-gray-900 mb-6">Select Vehicle Preference</h2>
               
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-                {availableVehicles.map((vehicle) => (
-                  <div
-                    key={vehicle.id}
-                    onClick={() => vehicle.status === 'available' && setBookingData({ ...bookingData, vehicleId: vehicle.id })}
-                    className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${
-                      bookingData.vehicleId === vehicle.id
-                        ? 'border-[#2563EB] bg-blue-50'
-                        : vehicle.status === 'available'
-                        ? 'border-gray-200 hover:border-[#2563EB]'
-                        : 'border-gray-200 opacity-50 cursor-not-allowed'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                          <Car className="w-6 h-6 text-gray-600" />
+              {availableVehicles.length === 0 ? (
+                <p className="text-gray-500 mb-6">No vehicles currently available for direct selection. You can proceed and Admin will assign one.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                  {availableVehicles.map((vehicle) => (
+                    <div
+                      key={vehicle.id}
+                      onClick={() => setBookingData({ ...bookingData, vehicleId: vehicle.id })}
+                      className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${
+                        bookingData.vehicleId === vehicle.id
+                          ? 'border-[#2563EB] bg-blue-50'
+                          : 'border-gray-200 hover:border-[#2563EB]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                            <Car className="w-6 h-6 text-gray-600" />
+                          </div>
+                          <div>
+                            <div className="text-gray-900">{vehicle.number}</div>
+                            <div className="text-sm text-gray-500">{vehicle.model}</div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="text-gray-900">{vehicle.number}</div>
-                          <div className="text-sm text-gray-500">{vehicle.model}</div>
-                        </div>
+                        <Badge status="available" size="sm" />
                       </div>
-                      <Badge status={vehicle.status} size="sm" />
+                      <div className="flex items-center gap-4 text-sm text-gray-600">
+                        <div>{vehicle.type}</div>
+                        <div>•</div>
+                        <div>{vehicle.seats} seats</div>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-4 text-sm text-gray-600">
-                      <div>{vehicle.type}</div>
-                      <div>•</div>
-                      <div>{vehicle.seats} seats</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
 
               <div className="flex gap-3">
                 <button
@@ -302,8 +357,8 @@ export function BookVehicle({ user, onNavigate, onLogout }: BookVehicleProps) {
                 </button>
                 <button
                   onClick={() => setCurrentStep(5)}
-                  disabled={!bookingData.vehicleId}
-                  className="flex-1 py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  // Allow proceeding even if no vehicle selected (Admin assigns)
+                  className="flex-1 py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all flex items-center justify-center gap-2"
                 >
                   Review Booking
                   <ArrowRight className="w-5 h-5" />
@@ -340,16 +395,16 @@ export function BookVehicle({ user, onNavigate, onLogout }: BookVehicleProps) {
                 </div>
 
                 <div className="p-4 bg-gray-50 rounded-xl">
-                  <div className="text-sm text-gray-500 mb-1">Vehicle</div>
+                  <div className="text-sm text-gray-500 mb-1">Preferred Vehicle</div>
                   <div className="text-gray-900">
-                    {availableVehicles.find(v => v.id === bookingData.vehicleId)?.number} - {availableVehicles.find(v => v.id === bookingData.vehicleId)?.model}
+                    {selectedVehicle ? `${selectedVehicle.number} - ${selectedVehicle.model}` : 'Any Available Vehicle'}
                   </div>
                 </div>
 
                 <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
                   <div className="flex items-center justify-between">
                     <div className="text-gray-700">Estimated Cost</div>
-                    <div className="text-xl text-gray-900">LKR 1,500</div>
+                    <div className="text-xl text-gray-900">{bookingData.cost}</div>
                   </div>
                 </div>
               </div>
@@ -363,9 +418,10 @@ export function BookVehicle({ user, onNavigate, onLogout }: BookVehicleProps) {
                 </button>
                 <button
                   onClick={handleBooking}
-                  className="flex-1 py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all"
+                  disabled={loading}
+                  className="flex-1 py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all disabled:opacity-50"
                 >
-                  Confirm Booking
+                  {loading ? 'Submitting...' : 'Confirm Booking'}
                 </button>
               </div>
             </div>

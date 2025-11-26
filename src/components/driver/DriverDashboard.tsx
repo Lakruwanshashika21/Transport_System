@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Car, Calendar, Clock, MapPin, User as UserIcon, Phone, Navigation } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
+// Firebase Imports
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface DriverDashboardProps {
   user: User;
@@ -11,42 +14,56 @@ interface DriverDashboardProps {
   onLogout: () => void;
 }
 
-const availableVehicles = [
-  { id: '1', number: 'CAB-2345', model: 'Toyota Corolla' },
-  { id: '2', number: 'VAN-5678', model: 'Toyota Hiace' },
-  { id: '3', number: 'CAR-1234', model: 'Honda Civic' },
-];
-
-const todaysTrips = [
-  {
-    id: 'TRP001',
-    customer: 'John Doe',
-    customerPhone: '+94 77 123 4567',
-    epf: 'EPF12345',
-    pickup: 'Office Building A, Colombo 03',
-    destination: 'Client Meeting - Downtown Plaza',
-    time: '09:00 AM',
-    status: 'approved' as const,
-    distance: '12.5 km',
-  },
-  {
-    id: 'TRP005',
-    customer: 'Jane Smith',
-    customerPhone: '+94 77 234 5678',
-    epf: 'EPF67890',
-    pickup: 'Main Office',
-    destination: 'Airport Terminal',
-    time: '02:00 PM',
-    status: 'approved' as const,
-    distance: '35.2 km',
-  },
-];
-
 export function DriverDashboard({ user, onNavigate, onLogout }: DriverDashboardProps) {
+  // 1. State
+  const [availableVehicles, setAvailableVehicles] = useState<any[]>([]);
+  const [todaysTrips, setTodaysTrips] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedVehicle, setSelectedVehicle] = useState('');
 
-  const nextTrip = todaysTrips[0];
-  const timeUntilTrip = '2 hours 15 minutes';
+  // 2. Fetch Data
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // A. Fetch Available Vehicles
+        // We only show vehicles that are currently 'available' for the driver to pick
+        const vehiclesQuery = query(collection(db, "vehicles"), where("status", "==", "available"));
+        const vehicleSnapshot = await getDocs(vehiclesQuery);
+        const vehicleList = vehicleSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAvailableVehicles(vehicleList);
+
+        // B. Fetch My Assigned Trips
+        // Filter by driverId matching the current user's ID and status='approved'
+        const tripsQuery = query(
+          collection(db, "trip_requests"), 
+          where("driverId", "==", user.id),
+          where("status", "==", "approved")
+        );
+        const tripsSnapshot = await getDocs(tripsQuery);
+        const tripList = tripsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setTodaysTrips(tripList);
+
+        setLoading(false);
+      } catch (error) {
+        console.error("Error fetching driver data:", error);
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [user.id]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F9FAFB] flex items-center justify-center">
+        <div className="text-gray-500">Loading Dashboard...</div>
+      </div>
+    );
+  }
+
+  // Logic for "Next Trip" (just takes the first one for now)
+  const nextTrip = todaysTrips.length > 0 ? todaysTrips[0] : null;
+  const timeUntilTrip = nextTrip ? 'Upcoming' : '-'; 
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -72,27 +89,31 @@ export function DriverDashboard({ user, onNavigate, onLogout }: DriverDashboardP
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {availableVehicles.map((vehicle) => (
-              <div
-                key={vehicle.id}
-                onClick={() => setSelectedVehicle(vehicle.id)}
-                className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${
-                  selectedVehicle === vehicle.id
-                    ? 'border-[#2563EB] bg-blue-50'
-                    : 'border-gray-200 hover:border-[#2563EB]'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center">
-                    <Car className="w-6 h-6 text-gray-600" />
-                  </div>
-                  <div>
-                    <div className="text-gray-900">{vehicle.number}</div>
-                    <div className="text-sm text-gray-500">{vehicle.model}</div>
+            {availableVehicles.length === 0 ? (
+              <p className="text-sm text-gray-500 col-span-3">No vehicles currently available.</p>
+            ) : (
+              availableVehicles.map((vehicle) => (
+                <div
+                  key={vehicle.id}
+                  onClick={() => setSelectedVehicle(vehicle.id)}
+                  className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${
+                    selectedVehicle === vehicle.id
+                      ? 'border-[#2563EB] bg-blue-50'
+                      : 'border-gray-200 hover:border-[#2563EB]'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center">
+                      <Car className="w-6 h-6 text-gray-600" />
+                    </div>
+                    <div>
+                      <div className="text-gray-900">{vehicle.number}</div>
+                      <div className="text-sm text-gray-500">{vehicle.model}</div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </Card>
 
@@ -128,7 +149,8 @@ export function DriverDashboard({ user, onNavigate, onLogout }: DriverDashboardP
                 <Navigation className="w-6 h-6 text-purple-600" />
               </div>
               <div>
-                <div className="text-2xl text-gray-900">47.7 km</div>
+                {/* This would require summing up distance from completed trips */}
+                <div className="text-2xl text-gray-900">-</div>
                 <div className="text-sm text-gray-500">Total Distance</div>
               </div>
             </div>
@@ -141,7 +163,7 @@ export function DriverDashboard({ user, onNavigate, onLogout }: DriverDashboardP
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-xl text-gray-900 mb-1">Next Trip</h2>
-                <p className="text-sm text-gray-600">Starting in {timeUntilTrip}</p>
+                <p className="text-sm text-gray-600">Status: {timeUntilTrip}</p>
               </div>
               <Badge status={nextTrip.status} />
             </div>
@@ -152,17 +174,17 @@ export function DriverDashboard({ user, onNavigate, onLogout }: DriverDashboardP
                   <UserIcon className="w-5 h-5 text-gray-400" />
                   <div>
                     <div className="text-sm text-gray-500">Customer</div>
-                    <div className="text-gray-900">{nextTrip.customer}</div>
-                    <div className="text-sm text-gray-600">{nextTrip.epf}</div>
+                    <div className="text-gray-900">{nextTrip.customer || nextTrip.customerName}</div>
+                    <div className="text-sm text-gray-600">{nextTrip.epf || nextTrip.epfNumber}</div>
                   </div>
                 </div>
 
                 <a
-                  href={`tel:${nextTrip.customerPhone}`}
+                  href={`tel:${nextTrip.phone}`}
                   className="flex items-center gap-2 text-[#2563EB] hover:text-[#1E40AF]"
                 >
                   <Phone className="w-4 h-4" />
-                  <span className="text-sm">{nextTrip.customerPhone}</span>
+                  <span className="text-sm">{nextTrip.phone || 'No Phone'}</span>
                 </a>
               </div>
 
@@ -192,7 +214,7 @@ export function DriverDashboard({ user, onNavigate, onLogout }: DriverDashboardP
                 </div>
                 <div className="flex items-center gap-2">
                   <Navigation className="w-4 h-4" />
-                  {nextTrip.distance}
+                  {nextTrip.distance || 'N/A'}
                 </div>
               </div>
               <button
@@ -210,6 +232,8 @@ export function DriverDashboard({ user, onNavigate, onLogout }: DriverDashboardP
           <h2 className="text-xl text-gray-900 mb-4">All Trips Today</h2>
           
           <div className="grid grid-cols-1 gap-4">
+            {todaysTrips.length === 0 && <p className="text-gray-500">No approved trips assigned to you yet.</p>}
+            
             {todaysTrips.map((trip) => (
               <Card key={trip.id} className="p-6">
                 <div className="flex items-start justify-between mb-4">
@@ -232,11 +256,11 @@ export function DriverDashboard({ user, onNavigate, onLogout }: DriverDashboardP
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <UserIcon className="w-4 h-4 text-gray-400" />
-                      <span className="text-sm text-gray-900">{trip.customer}</span>
+                      <span className="text-sm text-gray-900">{trip.customer || trip.customerName}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Phone className="w-4 h-4 text-gray-400" />
-                      <span className="text-sm text-gray-600">{trip.customerPhone}</span>
+                      <span className="text-sm text-gray-600">{trip.phone || 'No Phone'}</span>
                     </div>
                   </div>
 

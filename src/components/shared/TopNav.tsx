@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Menu, LogOut, User, MapPin, Calendar, FileText, Car, Users, Settings } from 'lucide-react';
 import { User as UserType } from '../../App';
 
@@ -125,5 +126,3 @@ export function TopNav({ user, onNavigate, onLogout, currentScreen }: TopNavProp
     </nav>
   );
 }
-
-import { useState } from 'react';

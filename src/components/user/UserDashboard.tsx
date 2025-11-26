@@ -1,8 +1,12 @@
+import { useState, useEffect } from 'react';
 import { Calendar, MapPin, Clock, Car, Plus, History } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
+// Firebase Imports
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface UserDashboardProps {
   user: User;
@@ -10,56 +14,62 @@ interface UserDashboardProps {
   onLogout: () => void;
 }
 
-// Mock data
-const upcomingTrips = [
-  {
-    id: 'TRP001',
-    vehicleNumber: 'CAB-2345',
-    driver: 'Mike Wilson',
-    driverPhone: '+94 77 123 4567',
-    pickup: 'Office Building A',
-    destination: 'Client Meeting - Downtown',
-    date: '2025-11-25',
-    time: '09:00 AM',
-    status: 'approved' as const,
-    distance: '12.5 km',
-    cost: 'LKR 1,500',
-  },
-  {
-    id: 'TRP002',
-    vehicleNumber: 'VAN-5678',
-    driver: 'Sarah Johnson',
-    driverPhone: '+94 77 234 5678',
-    pickup: 'Main Office',
-    destination: 'Airport Terminal',
-    date: '2025-11-27',
-    time: '06:30 AM',
-    status: 'requested' as const,
-    distance: '35.2 km',
-    cost: 'LKR 4,200',
-  },
-];
-
-const pastTrips = [
-  {
-    id: 'TRP003',
-    vehicleNumber: 'CAR-1234',
-    pickup: 'Office',
-    destination: 'Conference Center',
-    date: '2025-11-20',
-    status: 'completed' as const,
-  },
-  {
-    id: 'TRP004',
-    vehicleNumber: 'VAN-9012',
-    pickup: 'Branch Office',
-    destination: 'Head Office',
-    date: '2025-11-18',
-    status: 'completed' as const,
-  },
-];
-
 export function UserDashboard({ user, onNavigate, onLogout }: UserDashboardProps) {
+  const [upcomingTrips, setUpcomingTrips] = useState<any[]>([]);
+  const [pastTrips, setPastTrips] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchTrips = async () => {
+      try {
+        // Fetch trips for the current user
+        const q = query(
+          collection(db, "trip_requests"), 
+          where("userId", "==", user.id)
+        );
+        
+        const querySnapshot = await getDocs(q);
+        const allTrips = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+
+        // Client-side sorting (newest first)
+        allTrips.sort((a: any, b: any) => {
+          const dateA = new Date(`${a.date} ${a.time}`).getTime();
+          const dateB = new Date(`${b.date} ${b.time}`).getTime();
+          return dateB - dateA;
+        });
+
+        // Categorize trips
+        const upcoming = allTrips.filter((trip: any) => 
+          ['pending', 'approved', 'in-progress', 'requested'].includes(trip.status)
+        );
+        
+        const past = allTrips.filter((trip: any) => 
+          ['completed', 'cancelled', 'rejected'].includes(trip.status)
+        );
+
+        setUpcomingTrips(upcoming);
+        setPastTrips(past);
+        setLoading(false);
+      } catch (error) {
+        console.error("Error fetching user trips:", error);
+        setLoading(false);
+      }
+    };
+
+    fetchTrips();
+  }, [user.id]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F9FAFB] flex items-center justify-center">
+        <div className="text-gray-500">Loading Dashboard...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
       <TopNav user={user} onNavigate={onNavigate} onLogout={onLogout} currentScreen="user-dashboard" />
@@ -132,7 +142,7 @@ export function UserDashboard({ user, onNavigate, onLogout }: UserDashboardProps
                       <Badge status={trip.status} />
                     </div>
                     <button
-                      onClick={() => onNavigate('view-trip', trip.id)}
+                      onClick={() => onNavigate('view-trip', trip.id)} // Assuming view-trip screen handles viewing details
                       className="text-sm text-[#2563EB] hover:text-[#1E40AF]"
                     >
                       View Details
@@ -169,8 +179,8 @@ export function UserDashboard({ user, onNavigate, onLogout }: UserDashboardProps
                       <Car className="w-4 h-4 text-gray-400" />
                       <div>
                         <div className="text-xs text-gray-500">Vehicle</div>
-                        <div className="text-sm text-gray-900">{trip.vehicleNumber}</div>
-                        <div className="text-sm text-gray-900">{trip.driver}</div>
+                        <div className="text-sm text-gray-900">{trip.vehicleNumber || 'Pending'}</div>
+                        <div className="text-sm text-gray-900">{trip.driverName || 'Pending'}</div>
                       </div>
                     </div>
                   </div>
@@ -191,7 +201,7 @@ export function UserDashboard({ user, onNavigate, onLogout }: UserDashboardProps
           )}
         </div>
 
-        {/* Past Trips */}
+        {/* Past Trips (Limited view for dashboard) */}
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl text-gray-900">Recent Trips</h2>
@@ -204,7 +214,7 @@ export function UserDashboard({ user, onNavigate, onLogout }: UserDashboardProps
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {pastTrips.map((trip) => (
+            {pastTrips.slice(0, 3).map((trip) => (
               <Card key={trip.id} className="p-6">
                 <div className="flex items-center justify-between mb-3">
                   <div className="text-gray-900">Trip #{trip.id}</div>
@@ -216,15 +226,15 @@ export function UserDashboard({ user, onNavigate, onLogout }: UserDashboardProps
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <div className="text-gray-500">{trip.date}</div>
-                  <button
-                    onClick={() => onNavigate('view-trip', trip.id)}
-                    className="text-[#2563EB] hover:text-[#1E40AF]"
-                  >
-                    View Details
-                  </button>
+                  {/* Optional: Add view details for past trips if needed */}
                 </div>
               </Card>
             ))}
+            {pastTrips.length === 0 && (
+              <div className="col-span-full text-center text-gray-500 py-8 bg-white rounded-xl border border-gray-200">
+                No past trip history found.
+              </div>
+            )}
           </div>
         </div>
       </div>

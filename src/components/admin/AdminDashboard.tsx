@@ -1,8 +1,12 @@
+import { useState, useEffect } from 'react';
 import { Car, Calendar, CheckCircle, XCircle, Navigation, Users, AlertCircle } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
+// Firebase Imports
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface AdminDashboardProps {
   user: User;
@@ -10,35 +14,67 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-const liveVehicles = [
-  { id: '1', number: 'CAB-2345', status: 'in-use' as const, location: 'Colombo 03', driver: 'Mike Wilson' },
-  { id: '2', number: 'VAN-5678', status: 'available' as const, location: 'Parking', driver: 'Unassigned' },
-  { id: '3', number: 'CAR-1234', status: 'in-use' as const, location: 'Colombo 02', driver: 'Sarah Johnson' },
-  { id: '4', number: 'SUV-9012', status: 'maintenance' as const, location: 'Workshop', driver: 'Unassigned' },
-];
-
-const pendingRequests = [
-  {
-    id: 'TRP006',
-    customer: 'Robert Chen',
-    epf: 'EPF54321',
-    pickup: 'Branch Office',
-    destination: 'City Center',
-    date: '2025-11-26',
-    time: '10:00 AM',
-  },
-  {
-    id: 'TRP007',
-    customer: 'Emily Brown',
-    epf: 'EPF98765',
-    pickup: 'Head Office',
-    destination: 'Conference Hall',
-    date: '2025-11-26',
-    time: '02:30 PM',
-  },
-];
-
 export function AdminDashboard({ user, onNavigate, onLogout }: AdminDashboardProps) {
+  // 1. State for Data
+  const [liveVehicles, setLiveVehicles] = useState<any[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const [stats, setStats] = useState({
+    totalTrips: 0,
+    activeVehicles: 0,
+    completedTrips: 0,
+    cancellations: 0
+  });
+  const [loading, setLoading] = useState(true);
+
+  // 2. Fetch Data from Firebase
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // A. Fetch Vehicles
+        const vehiclesSnapshot = await getDocs(collection(db, "vehicles"));
+        const vehicles = vehiclesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setLiveVehicles(vehicles);
+
+        // B. Fetch Trip Requests (All of them to calculate stats)
+        const requestsSnapshot = await getDocs(collection(db, "trip_requests"));
+        const requests = requestsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        // C. Filter for "Pending" requests to show in the list
+        const pending = requests.filter((req: any) => req.status === 'pending');
+        setPendingRequests(pending);
+
+        // D. Calculate Stats
+        const activeVehiclesCount = vehicles.filter((v: any) => v.status === 'in-use').length;
+        const completedTripsCount = requests.filter((r: any) => r.status === 'completed').length;
+        const cancelledTripsCount = requests.filter((r: any) => r.status === 'cancelled').length;
+        
+        // Assuming 'total trips today' means requests for today (simplified for now as total requests)
+        // You can add date filtering logic here later
+        setStats({
+          totalTrips: requests.length,
+          activeVehicles: activeVehiclesCount,
+          completedTrips: completedTripsCount,
+          cancellations: cancelledTripsCount
+        });
+
+        setLoading(false);
+      } catch (error) {
+        console.error("Error fetching dashboard data:", error);
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F9FAFB] flex items-center justify-center">
+        <div className="text-gray-500">Loading Dashboard Data...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
       <TopNav user={user} onNavigate={onNavigate} onLogout={onLogout} currentScreen="admin-dashboard" />
@@ -58,8 +94,8 @@ export function AdminDashboard({ user, onNavigate, onLogout }: AdminDashboardPro
                 <Calendar className="w-6 h-6 text-[#2563EB]" />
               </div>
               <div>
-                <div className="text-2xl text-gray-900">12</div>
-                <div className="text-sm text-gray-500">Total Trips Today</div>
+                <div className="text-2xl text-gray-900">{stats.totalTrips}</div>
+                <div className="text-sm text-gray-500">Total Trips</div>
               </div>
             </div>
           </Card>
@@ -70,7 +106,7 @@ export function AdminDashboard({ user, onNavigate, onLogout }: AdminDashboardPro
                 <Car className="w-6 h-6 text-green-600" />
               </div>
               <div>
-                <div className="text-2xl text-gray-900">3</div>
+                <div className="text-2xl text-gray-900">{stats.activeVehicles}</div>
                 <div className="text-sm text-gray-500">Active Vehicles</div>
               </div>
             </div>
@@ -82,7 +118,7 @@ export function AdminDashboard({ user, onNavigate, onLogout }: AdminDashboardPro
                 <CheckCircle className="w-6 h-6 text-purple-600" />
               </div>
               <div>
-                <div className="text-2xl text-gray-900">8</div>
+                <div className="text-2xl text-gray-900">{stats.completedTrips}</div>
                 <div className="text-sm text-gray-500">Completed Trips</div>
               </div>
             </div>
@@ -94,7 +130,7 @@ export function AdminDashboard({ user, onNavigate, onLogout }: AdminDashboardPro
                 <XCircle className="w-6 h-6 text-red-600" />
               </div>
               <div>
-                <div className="text-2xl text-gray-900">1</div>
+                <div className="text-2xl text-gray-900">{stats.cancellations}</div>
                 <div className="text-sm text-gray-500">Cancellations</div>
               </div>
             </div>
@@ -132,34 +168,43 @@ export function AdminDashboard({ user, onNavigate, onLogout }: AdminDashboardPro
             <Card className="p-6">
               <h2 className="text-xl text-gray-900 mb-4">Live Vehicle Tracking</h2>
               
-              {/* Mock Map */}
-              <div className="w-full h-96 bg-gray-200 rounded-xl flex items-center justify-center mb-4">
-                <div className="text-center">
+              {/* Mock Map Placeholder */}
+              <div className="w-full h-96 bg-gray-200 rounded-xl flex items-center justify-center mb-4 relative overflow-hidden">
+                 {/* Note: To implement a Real Google Map here later:
+                    1. Install: npm install @react-google-maps/api
+                    2. Import { GoogleMap, LoadScript } ...
+                    3. Replace this div with the map component.
+                 */}
+                <div className="text-center z-10">
                   <Navigation className="w-16 h-16 text-[#2563EB] mx-auto mb-3" />
                   <p className="text-gray-500">Real-time Vehicle Locations</p>
-                  <p className="text-sm text-gray-400">Interactive map with live GPS tracking</p>
+                  <p className="text-sm text-gray-400">Map integration requires API Key</p>
                 </div>
               </div>
 
               {/* Vehicle List */}
-              <div className="space-y-3">
-                {liveVehicles.map((vehicle) => (
-                  <div key={vehicle.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center">
-                        <Car className="w-5 h-5 text-gray-600" />
+              <div className="space-y-3 max-h-64 overflow-y-auto">
+                {liveVehicles.length === 0 ? (
+                  <p className="text-gray-500 text-center py-4">No vehicles found in database.</p>
+                ) : (
+                  liveVehicles.map((vehicle: any) => (
+                    <div key={vehicle.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center">
+                          <Car className="w-5 h-5 text-gray-600" />
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-900">{vehicle.number || 'Unknown Number'}</div>
+                          <div className="text-sm text-gray-500">{vehicle.location || 'No Location'}</div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="text-sm text-gray-900">{vehicle.number}</div>
-                        <div className="text-xs text-gray-500">{vehicle.location}</div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-xs text-gray-600">{vehicle.driverName || 'Unassigned'}</div>
+                        <Badge status={vehicle.status || 'available'} size="sm" />
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-xs text-gray-600">{vehicle.driver}</div>
-                      <Badge status={vehicle.status} size="sm" />
-                    </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </Card>
           </div>

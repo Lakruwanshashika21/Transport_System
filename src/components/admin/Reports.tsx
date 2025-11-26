@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Download, Mail, Calendar, Car, User as UserIcon, FileText } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
+// Firebase Imports
+import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface ReportsProps {
   user: User;
@@ -11,15 +14,10 @@ interface ReportsProps {
   onLogout: () => void;
 }
 
-const reportData = [
-  { id: 'TRP001', date: '2025-11-20', vehicle: 'CAB-2345', driver: 'Mike Wilson', user: 'John Doe', epf: 'EPF12345', distance: '12.5 km', cost: 'LKR 1,500', status: 'completed' as const },
-  { id: 'TRP002', date: '2025-11-21', vehicle: 'VAN-5678', driver: 'Sarah Johnson', user: 'Jane Smith', epf: 'EPF67890', distance: '35.2 km', cost: 'LKR 4,200', status: 'completed' as const },
-  { id: 'TRP003', date: '2025-11-22', vehicle: 'CAR-1234', driver: 'David Miller', user: 'Robert Chen', epf: 'EPF54321', distance: '18.5 km', cost: 'LKR 2,200', status: 'completed' as const },
-  { id: 'TRP004', date: '2025-11-23', vehicle: 'CAB-2345', driver: 'Mike Wilson', user: 'Emily Brown', epf: 'EPF98765', distance: '8.3 km', cost: 'LKR 1,000', status: 'completed' as const },
-  { id: 'TRP005', date: '2025-11-24', vehicle: 'VAN-5678', driver: 'Sarah Johnson', user: 'John Doe', epf: 'EPF12345', distance: '22.1 km', cost: 'LKR 2,650', status: 'cancelled' as const },
-];
-
 export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
+  // 1. State
+  const [reports, setReports] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     vehicleNumber: '',
     epfNumber: '',
@@ -27,16 +25,57 @@ export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
     endDate: '',
   });
 
-  const filteredData = reportData.filter((item) => {
-    if (filters.vehicleNumber && !item.vehicle.toLowerCase().includes(filters.vehicleNumber.toLowerCase())) return false;
-    if (filters.epfNumber && !item.epf.toLowerCase().includes(filters.epfNumber.toLowerCase())) return false;
-    if (filters.startDate && item.date < filters.startDate) return false;
-    if (filters.endDate && item.date > filters.endDate) return false;
+  // 2. Fetch Data
+  useEffect(() => {
+    const fetchReports = async () => {
+      try {
+        // Fetch all trip requests
+        const q = query(collection(db, "trip_requests"));
+        const querySnapshot = await getDocs(q);
+        const data = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setReports(data);
+        setLoading(false);
+      } catch (error) {
+        console.error("Error fetching reports:", error);
+        setLoading(false);
+      }
+    };
+
+    fetchReports();
+  }, []);
+
+  // 3. Filter Logic
+  const filteredData = reports.filter((item) => {
+    // Handle potential field name differences (e.g. vehicle vs vehicleNumber)
+    const vehicle = item.vehicleNumber || item.vehicle || '';
+    const epf = item.epfNumber || item.epf || '';
+    const date = item.date || '';
+
+    if (filters.vehicleNumber && !vehicle.toLowerCase().includes(filters.vehicleNumber.toLowerCase())) return false;
+    if (filters.epfNumber && !epf.toLowerCase().includes(filters.epfNumber.toLowerCase())) return false;
+    if (filters.startDate && date < filters.startDate) return false;
+    if (filters.endDate && date > filters.endDate) return false;
     return true;
   });
 
-  const totalDistance = filteredData.reduce((sum, item) => sum + parseFloat(item.distance), 0);
-  const totalCost = filteredData.reduce((sum, item) => sum + parseInt(item.cost.replace(/[^0-9]/g, '')), 0);
+  // 4. Calculations
+  const parseCost = (cost: any) => {
+    if (typeof cost === 'number') return cost;
+    if (typeof cost === 'string') return parseInt(cost.replace(/[^0-9]/g, '') || '0');
+    return 0;
+  };
+
+  const parseDistance = (dist: any) => {
+    if (typeof dist === 'number') return dist;
+    if (typeof dist === 'string') return parseFloat(dist.replace(/[^0-9.]/g, '') || '0');
+    return 0;
+  };
+
+  const totalDistance = filteredData.reduce((sum, item) => sum + parseDistance(item.distance), 0);
+  const totalCost = filteredData.reduce((sum, item) => sum + parseCost(item.cost), 0);
 
   const handleExportPDF = () => {
     alert('Report exported as PDF successfully!');
@@ -45,6 +84,14 @@ export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
   const handleSendEmail = () => {
     alert('Report sent via email successfully!');
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F9FAFB] flex items-center justify-center">
+        <div className="text-gray-500">Loading Reports...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -207,12 +254,12 @@ export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
                   <tr key={trip.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 text-gray-900">{trip.id}</td>
                     <td className="px-6 py-4 text-gray-600">{trip.date}</td>
-                    <td className="px-6 py-4 text-gray-900">{trip.vehicle}</td>
-                    <td className="px-6 py-4 text-gray-600">{trip.driver}</td>
-                    <td className="px-6 py-4 text-gray-900">{trip.user}</td>
-                    <td className="px-6 py-4 text-gray-600">{trip.epf}</td>
-                    <td className="px-6 py-4 text-gray-600">{trip.distance}</td>
-                    <td className="px-6 py-4 text-gray-900">{trip.cost}</td>
+                    <td className="px-6 py-4 text-gray-900">{trip.vehicleNumber || trip.vehicle || '-'}</td>
+                    <td className="px-6 py-4 text-gray-600">{trip.driverName || trip.driver || '-'}</td>
+                    <td className="px-6 py-4 text-gray-900">{trip.passengerName || trip.user || '-'}</td>
+                    <td className="px-6 py-4 text-gray-600">{trip.epfNumber || trip.epf || '-'}</td>
+                    <td className="px-6 py-4 text-gray-600">{trip.distance ? `${trip.distance} km` : '-'}</td>
+                    <td className="px-6 py-4 text-gray-900">{trip.cost ? `LKR ${trip.cost}` : '-'}</td>
                     <td className="px-6 py-4">
                       <Badge status={trip.status} size="sm" />
                     </td>

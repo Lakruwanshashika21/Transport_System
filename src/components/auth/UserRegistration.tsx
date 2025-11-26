@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import { ArrowLeft, User, Mail, Phone, Lock, IdCard, Eye, EyeOff } from 'lucide-react';
+// Firebase Imports
+import { createUserWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db, googleProvider } from '../../firebase'; // Adjust path if needed
 
 interface UserRegistrationProps {
   onBack: () => void;
@@ -15,19 +19,116 @@ export function UserRegistration({ onBack, onRegister }: UserRegistrationProps) 
     password: '',
     confirmPassword: '',
   });
+  
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  
+  // UI Feedback
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // 1. Handle Email/Password Registration
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Mock registration
-    alert('Registration successful! Please login.');
-    onRegister();
+    setError('');
+
+    // --- VALIDATION ---
+    if (!formData.epfNumber.trim()) {
+      setError("EPF Number is required for registration.");
+      return;
+    }
+    if (formData.password !== formData.confirmPassword) {
+      setError("Passwords do not match!");
+      return;
+    }
+    if (formData.password.length < 6) {
+      setError("Password must be at least 6 characters long.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // Create User in Firebase Authentication
+      const userCredential = await createUserWithEmailAndPassword(
+        auth, 
+        formData.email, 
+        formData.password
+      );
+      const user = userCredential.user;
+
+      // Save User Details to Firestore
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        email: user.email,
+        name: formData.fullName,
+        epfNumber: formData.epfNumber,
+        phone: formData.phone,
+        role: "user", // Standard user role
+        createdAt: new Date().toISOString()
+      });
+
+      alert('Registration successful! You can now login.');
+      onRegister();
+
+    } catch (err: any) {
+      console.error("Registration Error:", err);
+      if (err.code === 'auth/email-already-in-use') {
+        setError('This email is already registered.');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('Invalid email address.');
+      } else {
+        setError('Error: ' + err.message);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleGoogleSignup = () => {
-    alert('Google sign-up successful! Please complete your profile.');
-    onRegister();
+  // 2. Handle Google Registration
+  const handleGoogleSignup = async () => {
+    setError('');
+    
+    // --- COMPULSORY EPF CHECK ---
+    // Even if using Google, we force them to type the EPF in the form first.
+    if (!formData.epfNumber.trim()) {
+      setError('Please enter your EPF Number in the form below before signing up with Google.');
+      // Scroll to top to make sure they see the error
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    
+    setLoading(true);
+
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+
+      // Save to Firestore
+      // We use the EPF number entered in the form
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        email: user.email,
+        name: formData.fullName || user.displayName,
+        epfNumber: formData.epfNumber, // Save the compulsory EPF
+        phone: formData.phone || '',
+        role: "user",
+        authProvider: 'google',
+        createdAt: new Date().toISOString()
+      }, { merge: true }); // merge: true prevents overwriting if they log in again later
+
+      alert('Google Registration successful!');
+      onRegister();
+    } catch (err: any) {
+      console.error(err);
+      if (err.code === 'auth/popup-closed-by-user') {
+        setError('Sign-in cancelled by user.');
+      } else {
+        setError('Google sign-up failed: ' + err.message);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -50,11 +151,20 @@ export function UserRegistration({ onBack, onRegister }: UserRegistrationProps) 
       <div className="flex-1 flex items-center justify-center p-4 sm:p-6">
         <div className="w-full max-w-2xl">
           <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 sm:p-8">
-            {/* Google Sign-up */}
+            
+            {/* Error Message Box */}
+            {error && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg text-center font-medium">
+                {error}
+              </div>
+            )}
+
+            {/* Google Sign-up Button */}
             <button
               type="button"
               onClick={handleGoogleSignup}
-              className="w-full flex items-center justify-center gap-3 px-4 py-3 border-2 border-gray-300 rounded-xl hover:bg-gray-50 transition-all mb-6"
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-3 px-4 py-3 border-2 border-gray-300 rounded-xl hover:bg-gray-50 transition-all mb-2 disabled:opacity-50"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24">
                 <path
@@ -76,6 +186,10 @@ export function UserRegistration({ onBack, onRegister }: UserRegistrationProps) 
               </svg>
               <span className="text-gray-700">Sign up with Google</span>
             </button>
+            
+            <p className="text-xs text-center text-gray-500 mb-6">
+              * Please enter your <strong>EPF Number</strong> below before clicking Google Sign-up.
+            </p>
 
             <div className="relative mb-6">
               <div className="absolute inset-0 flex items-center">
@@ -89,11 +203,10 @@ export function UserRegistration({ onBack, onRegister }: UserRegistrationProps) 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-700 mb-2">Full Name *</label>
+                  <label className="block text-sm text-gray-700 mb-2">Full Name</label>
                   <div className="relative">
                     <input
                       type="text"
-                      required
                       value={formData.fullName}
                       onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
                       placeholder="John Doe"
@@ -104,11 +217,10 @@ export function UserRegistration({ onBack, onRegister }: UserRegistrationProps) 
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-700 mb-2">Email Address *</label>
+                  <label className="block text-sm text-gray-700 mb-2">Email Address</label>
                   <div className="relative">
                     <input
                       type="email"
-                      required
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       placeholder="john.doe@example.com"
@@ -121,7 +233,7 @@ export function UserRegistration({ onBack, onRegister }: UserRegistrationProps) 
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-700 mb-2">EPF Number *</label>
+                  <label className="block text-sm text-gray-700 mb-2">EPF Number <span className="text-red-500">*</span></label>
                   <div className="relative">
                     <input
                       type="text"
@@ -136,11 +248,10 @@ export function UserRegistration({ onBack, onRegister }: UserRegistrationProps) 
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-700 mb-2">Phone Number *</label>
+                  <label className="block text-sm text-gray-700 mb-2">Phone Number</label>
                   <div className="relative">
                     <input
                       type="tel"
-                      required
                       value={formData.phone}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                       placeholder="+94 77 123 4567"
@@ -153,11 +264,10 @@ export function UserRegistration({ onBack, onRegister }: UserRegistrationProps) 
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-700 mb-2">Password *</label>
+                  <label className="block text-sm text-gray-700 mb-2">Password</label>
                   <div className="relative">
                     <input
                       type={showPassword ? 'text' : 'password'}
-                      required
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                       placeholder="••••••••"
@@ -175,11 +285,10 @@ export function UserRegistration({ onBack, onRegister }: UserRegistrationProps) 
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-700 mb-2">Confirm Password *</label>
+                  <label className="block text-sm text-gray-700 mb-2">Confirm Password</label>
                   <div className="relative">
                     <input
                       type={showConfirmPassword ? 'text' : 'password'}
-                      required
                       value={formData.confirmPassword}
                       onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
                       placeholder="••••••••"
@@ -210,9 +319,10 @@ export function UserRegistration({ onBack, onRegister }: UserRegistrationProps) 
 
               <button
                 type="submit"
-                className="w-full py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all"
+                disabled={loading}
+                className="w-full py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all disabled:opacity-50"
               >
-                Create Account
+                {loading ? 'Creating Account...' : 'Create Account'}
               </button>
             </form>
 

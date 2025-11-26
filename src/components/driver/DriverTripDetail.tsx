@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MapPin, User as UserIcon, Phone, Navigation, Play, Square, CheckCircle } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
+// Firebase Imports
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface DriverTripDetailProps {
   user: User;
@@ -11,38 +14,95 @@ interface DriverTripDetailProps {
   onLogout: () => void;
 }
 
-const tripData = {
-  id: 'TRP001',
-  customer: 'John Doe',
-  customerPhone: '+94 77 123 4567',
-  epf: 'EPF12345',
-  pickup: 'Office Building A, Colombo 03',
-  pickupLat: '6.9271',
-  pickupLng: '79.8612',
-  destination: 'Client Meeting - Downtown Plaza, Colombo 02',
-  time: '09:00 AM',
-  distance: '12.5 km',
-  estimatedDuration: '25 minutes',
-};
-
 export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverTripDetailProps) {
-  const [tripStatus, setTripStatus] = useState<'pending' | 'in-progress' | 'completed'>('pending');
+  const [trip, setTrip] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [showSummary, setShowSummary] = useState(false);
 
-  const handleStartTrip = () => {
-    setTripStatus('in-progress');
-    alert('Trip started! GPS tracking enabled.');
+  // 1. Fetch Trip Data
+  useEffect(() => {
+    const fetchTrip = async () => {
+      if (!tripId) return;
+
+      try {
+        const docRef = doc(db, "trip_requests", tripId);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          const data = { id: docSnap.id, ...docSnap.data() };
+          setTrip(data);
+          
+          // If previously completed, show summary immediately
+          if (data.status === 'completed') {
+            setShowSummary(true);
+          }
+        } else {
+          alert("Trip not found!");
+          onNavigate('driver-dashboard');
+        }
+      } catch (error) {
+        console.error("Error fetching trip:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchTrip();
+  }, [tripId, onNavigate]);
+
+  // 2. Handlers
+  const handleStartTrip = async () => {
+    if (!trip) return;
+    try {
+      const tripRef = doc(db, "trip_requests", trip.id);
+      await updateDoc(tripRef, {
+        status: 'in-progress',
+        startedAt: new Date().toISOString()
+      });
+      
+      // Update local state immediately for UI responsiveness
+      setTrip((prev: any) => ({ ...prev, status: 'in-progress' }));
+      alert('Trip started! GPS tracking enabled.');
+    } catch (error) {
+      console.error("Error starting trip:", error);
+      alert("Failed to start trip. Please try again.");
+    }
   };
 
-  const handleEndTrip = () => {
-    setTripStatus('completed');
-    setShowSummary(true);
+  const handleEndTrip = async () => {
+    if (!trip) return;
+    try {
+      const tripRef = doc(db, "trip_requests", trip.id);
+      await updateDoc(tripRef, {
+        status: 'completed',
+        endedAt: new Date().toISOString()
+      });
+
+      // Mark vehicle as available again
+      if (trip.vehicleId) {
+        const vehicleRef = doc(db, "vehicles", trip.vehicleId);
+        await updateDoc(vehicleRef, { status: 'available' });
+      }
+
+      setTrip((prev: any) => ({ ...prev, status: 'completed' }));
+      setShowSummary(true);
+    } catch (error) {
+      console.error("Error ending trip:", error);
+      alert("Failed to end trip. Please try again.");
+    }
   };
 
   const handleCompleteSummary = () => {
-    alert('Trip completed successfully!');
     onNavigate('driver-dashboard');
   };
+
+  if (loading) {
+    return <div className="p-10 text-center">Loading Trip Details...</div>;
+  }
+
+  if (!trip) {
+    return <div className="p-10 text-center">Trip not found.</div>;
+  }
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -57,7 +117,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
             ← Back to Dashboard
           </button>
           <h1 className="text-3xl text-gray-900 mb-2">Trip Details</h1>
-          <p className="text-gray-600">Trip #{tripData.id}</p>
+          <p className="text-gray-600">Trip #{trip.id}</p>
         </div>
 
         {!showSummary ? (
@@ -67,25 +127,25 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
               {/* Map */}
               <Card className="p-6">
                 <h2 className="text-lg text-gray-900 mb-4">
-                  {tripStatus === 'pending' && 'Route to Pickup Location'}
-                  {tripStatus === 'in-progress' && 'Navigation to Destination'}
-                  {tripStatus === 'completed' && 'Trip Completed'}
+                  {trip.status === 'approved' && 'Route to Pickup Location'}
+                  {trip.status === 'in-progress' && 'Navigation to Destination'}
+                  {trip.status === 'completed' && 'Trip Completed'}
                 </h2>
                 
                 {/* Mock Map */}
-                <div className="w-full h-96 bg-gray-200 rounded-xl flex items-center justify-center mb-4">
-                  <div className="text-center">
+                <div className="w-full h-96 bg-gray-200 rounded-xl flex items-center justify-center mb-4 relative overflow-hidden">
+                  <div className="text-center z-10">
                     <Navigation className="w-16 h-16 text-[#2563EB] mx-auto mb-3" />
                     <p className="text-gray-500">Interactive Map Navigation</p>
                     <p className="text-sm text-gray-400">
-                      {tripStatus === 'pending' && 'Route to pickup location'}
-                      {tripStatus === 'in-progress' && 'Live GPS tracking active'}
-                      {tripStatus === 'completed' && 'Trip route completed'}
+                      {trip.status === 'approved' && 'Route to pickup location'}
+                      {trip.status === 'in-progress' && 'Live GPS tracking active'}
+                      {trip.status === 'completed' && 'Trip route completed'}
                     </p>
                   </div>
                 </div>
 
-                {tripStatus === 'in-progress' && (
+                {trip.status === 'in-progress' && (
                   <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
                     <div className="flex items-center gap-2 text-green-700">
                       <div className="w-2 h-2 bg-green-600 rounded-full animate-pulse"></div>
@@ -106,9 +166,10 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                     </div>
                     <div className="flex-1">
                       <div className="text-sm text-gray-500 mb-1">Pickup Location</div>
-                      <div className="text-gray-900">{tripData.pickup}</div>
+                      <div className="text-gray-900">{trip.pickup}</div>
+                      {/* Fallback if lat/lng aren't in DB yet */}
                       <div className="text-sm text-gray-500 mt-1">
-                        Lat: {tripData.pickupLat}, Lng: {tripData.pickupLng}
+                        Lat: {trip.pickupLat || 'N/A'}, Lng: {trip.pickupLng || 'N/A'}
                       </div>
                     </div>
                   </div>
@@ -121,7 +182,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                     </div>
                     <div className="flex-1">
                       <div className="text-sm text-gray-500 mb-1">Destination</div>
-                      <div className="text-gray-900">{tripData.destination}</div>
+                      <div className="text-gray-900">{trip.destination}</div>
                     </div>
                   </div>
                 </div>
@@ -129,11 +190,11 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                 <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-gray-200">
                   <div>
                     <div className="text-sm text-gray-500 mb-1">Distance</div>
-                    <div className="text-gray-900">{tripData.distance}</div>
+                    <div className="text-gray-900">{trip.distance || 'Calculating...'}</div>
                   </div>
                   <div>
                     <div className="text-sm text-gray-500 mb-1">Est. Duration</div>
-                    <div className="text-gray-900">{tripData.estimatedDuration}</div>
+                    <div className="text-gray-900">{trip.estimatedDuration || 'Calculating...'}</div>
                   </div>
                 </div>
               </Card>
@@ -150,19 +211,19 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                     <UserIcon className="w-5 h-5 text-gray-400" />
                     <div>
                       <div className="text-sm text-gray-500">Name</div>
-                      <div className="text-gray-900">{tripData.customer}</div>
-                      <div className="text-sm text-gray-600">{tripData.epf}</div>
+                      <div className="text-gray-900">{trip.customer || trip.customerName}</div>
+                      <div className="text-sm text-gray-600">{trip.epf || trip.epfNumber}</div>
                     </div>
                   </div>
 
                   <a
-                    href={`tel:${tripData.customerPhone}`}
+                    href={`tel:${trip.customerPhone || trip.phone}`}
                     className="flex items-center gap-3 p-3 bg-green-50 rounded-xl hover:bg-green-100 transition-all"
                   >
                     <Phone className="w-5 h-5 text-green-600" />
                     <div>
                       <div className="text-sm text-gray-500">Call Customer</div>
-                      <div className="text-green-700">{tripData.customerPhone}</div>
+                      <div className="text-green-700">{trip.customerPhone || trip.phone || 'N/A'}</div>
                     </div>
                   </a>
                 </div>
@@ -173,7 +234,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                 <h2 className="text-lg text-gray-900 mb-4">Trip Controls</h2>
                 
                 <div className="space-y-3">
-                  {tripStatus === 'pending' && (
+                  {(trip.status === 'approved' || trip.status === 'pending') && (
                     <button
                       onClick={handleStartTrip}
                       className="w-full flex items-center justify-center gap-2 px-4 py-4 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-all"
@@ -183,7 +244,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                     </button>
                   )}
 
-                  {tripStatus === 'in-progress' && (
+                  {trip.status === 'in-progress' && (
                     <button
                       onClick={handleEndTrip}
                       className="w-full flex items-center justify-center gap-2 px-4 py-4 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all"
@@ -193,7 +254,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                     </button>
                   )}
 
-                  {tripStatus === 'completed' && (
+                  {trip.status === 'completed' && (
                     <div className="flex items-center justify-center gap-2 px-4 py-4 bg-gray-100 text-gray-700 rounded-xl">
                       <CheckCircle className="w-5 h-5 text-green-600" />
                       Trip Completed
@@ -201,13 +262,13 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                   )}
                 </div>
 
-                {tripStatus === 'pending' && (
+                {trip.status === 'approved' && (
                   <p className="text-sm text-gray-500 mt-3 text-center">
                     GPS tracking will start when you begin the trip
                   </p>
                 )}
 
-                {tripStatus === 'in-progress' && (
+                {trip.status === 'in-progress' && (
                   <p className="text-sm text-green-600 mt-3 text-center">
                     Your location is being tracked
                   </p>
@@ -229,22 +290,22 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
             <div className="space-y-4 mb-8">
               <div className="p-4 bg-gray-50 rounded-xl">
                 <div className="text-sm text-gray-500 mb-1">Trip ID</div>
-                <div className="text-gray-900">{tripData.id}</div>
+                <div className="text-gray-900">{trip.id}</div>
               </div>
 
               <div className="p-4 bg-gray-50 rounded-xl">
                 <div className="text-sm text-gray-500 mb-1">Customer</div>
-                <div className="text-gray-900">{tripData.customer}</div>
+                <div className="text-gray-900">{trip.customer || trip.customerName}</div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 bg-gray-50 rounded-xl">
                   <div className="text-sm text-gray-500 mb-1">Distance</div>
-                  <div className="text-gray-900">{tripData.distance}</div>
+                  <div className="text-gray-900">{trip.distance || 'N/A'}</div>
                 </div>
                 <div className="p-4 bg-gray-50 rounded-xl">
                   <div className="text-sm text-gray-500 mb-1">Duration</div>
-                  <div className="text-gray-900">{tripData.estimatedDuration}</div>
+                  <div className="text-gray-900">{trip.estimatedDuration || 'N/A'}</div>
                 </div>
               </div>
 

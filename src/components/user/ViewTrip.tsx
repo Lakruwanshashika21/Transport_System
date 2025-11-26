@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MapPin, Calendar, Clock, Car, Phone, User as UserIcon, Navigation, FileText, X, Download } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
+// Firebase Imports
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface ViewTripProps {
   user: User;
@@ -12,46 +15,83 @@ interface ViewTripProps {
   onLogout: () => void;
 }
 
-// Mock trip data
-const tripData = {
-  id: 'TRP001',
-  vehicleNumber: 'CAB-2345',
-  vehicleModel: 'Toyota Corolla',
-  driver: 'Mike Wilson',
-  driverPhone: '+94 77 123 4567',
-  pickup: 'Office Building A, Colombo 03',
-  destination: 'Client Meeting - Downtown Plaza, Colombo 02',
-  date: '2025-11-25',
-  time: '09:00 AM',
-  status: 'approved' as const,
-  distance: '12.5 km',
-  cost: 'LKR 1,500',
-  currentLocation: 'En route to pickup location',
-  estimatedArrival: '5 minutes',
-  timeline: [
-    { status: 'requested', label: 'Requested', date: '2025-11-20 10:30 AM', completed: true },
-    { status: 'approved', label: 'Approved', date: '2025-11-20 11:15 AM', completed: true },
-    { status: 'in-progress', label: 'In Progress', date: '', completed: false },
-    { status: 'completed', label: 'Completed', date: '', completed: false },
-  ],
-};
-
 export function ViewTrip({ user, tripId, onNavigate, onLogout }: ViewTripProps) {
+  const [trip, setTrip] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
 
-  const handleCancelTrip = () => {
+  // 1. Fetch Trip Data
+  const fetchTrip = async () => {
+    if (!tripId) return;
+    try {
+      const docRef = doc(db, "trip_requests", tripId);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        setTrip({ id: docSnap.id, ...docSnap.data() });
+      } else {
+        alert("Trip not found.");
+        onNavigate('user-dashboard');
+      }
+    } catch (error) {
+      console.error("Error fetching trip:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTrip();
+  }, [tripId]);
+
+  // 2. Handle Cancellation
+  const handleCancelTrip = async () => {
     if (!cancelReason.trim()) {
       alert('Please provide a reason for cancellation');
       return;
     }
-    alert('Trip cancelled successfully');
-    setShowCancelModal(false);
-    onNavigate('user-dashboard');
+
+    try {
+      const tripRef = doc(db, "trip_requests", trip.id);
+      await updateDoc(tripRef, {
+        status: 'cancelled',
+        cancellationReason: cancelReason,
+        cancelledAt: new Date().toISOString()
+      });
+
+      // If a vehicle was assigned, free it up
+      if (trip.vehicleId) {
+        const vehicleRef = doc(db, "vehicles", trip.vehicleId);
+        await updateDoc(vehicleRef, { status: 'available' });
+      }
+
+      alert('Trip cancelled successfully');
+      setShowCancelModal(false);
+      // Refresh data instead of navigating away so user can see updated status
+      fetchTrip(); 
+    } catch (error) {
+      console.error("Error cancelling trip:", error);
+      alert("Failed to cancel trip.");
+    }
   };
 
   const handleDownloadReceipt = () => {
-    alert('Receipt PDF downloaded');
+    alert('Receipt PDF downloaded (Feature coming soon)');
+  };
+
+  if (loading) return <div className="p-10 text-center">Loading Trip Details...</div>;
+  if (!trip) return <div className="p-10 text-center">Trip not found.</div>;
+
+  // Helper to determine timeline state
+  const getTimeline = () => {
+    const steps = [
+      { status: 'pending', label: 'Requested', date: trip.requestedAt, completed: !!trip.requestedAt },
+      { status: 'approved', label: 'Approved', date: trip.approvedAt, completed: !!trip.approvedAt },
+      { status: 'in-progress', label: 'In Progress', date: trip.startedAt, completed: !!trip.startedAt },
+      { status: 'completed', label: 'Completed', date: trip.endedAt, completed: !!trip.endedAt },
+    ];
+    return steps;
   };
 
   return (
@@ -69,32 +109,34 @@ export function ViewTrip({ user, tripId, onNavigate, onLogout }: ViewTripProps) 
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl text-gray-900 mb-2">Trip Details</h1>
-              <p className="text-gray-600">Trip #{tripData.id}</p>
+              <p className="text-gray-600">Trip #{trip.id}</p>
             </div>
-            <Badge status={tripData.status} />
+            <Badge status={trip.status} />
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Live Tracking */}
-            {tripData.status === 'approved' && (
+            {/* Live Tracking (Only if approved/in-progress) */}
+            {(trip.status === 'approved' || trip.status === 'in-progress') && (
               <Card className="p-6">
                 <h2 className="text-lg text-gray-900 mb-4">Live Tracking</h2>
                 
                 {/* Mock Map */}
-                <div className="w-full h-64 bg-gray-200 rounded-xl flex items-center justify-center mb-4">
-                  <div className="text-center">
+                <div className="w-full h-64 bg-gray-200 rounded-xl flex items-center justify-center mb-4 relative overflow-hidden">
+                  <div className="text-center z-10">
                     <Navigation className="w-12 h-12 text-[#2563EB] mx-auto mb-2" />
                     <p className="text-gray-500">Live GPS Tracking</p>
-                    <p className="text-sm text-gray-400">{tripData.currentLocation}</p>
+                    <p className="text-sm text-gray-400">
+                      {trip.status === 'in-progress' ? 'Driver is currently driving' : 'Driver assigned, awaiting start'}
+                    </p>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between p-4 bg-blue-50 rounded-xl">
                   <div className="text-gray-700">Estimated Arrival</div>
-                  <div className="text-lg text-[#2563EB]">{tripData.estimatedArrival}</div>
+                  <div className="text-lg text-[#2563EB]">{trip.estimatedDuration || 'Calculating...'}</div>
                 </div>
               </Card>
             )}
@@ -110,7 +152,7 @@ export function ViewTrip({ user, tripId, onNavigate, onLogout }: ViewTripProps) 
                   </div>
                   <div className="flex-1">
                     <div className="text-sm text-gray-500 mb-1">Pickup Location</div>
-                    <div className="text-gray-900">{tripData.pickup}</div>
+                    <div className="text-gray-900">{trip.pickup}</div>
                   </div>
                 </div>
 
@@ -122,7 +164,7 @@ export function ViewTrip({ user, tripId, onNavigate, onLogout }: ViewTripProps) 
                   </div>
                   <div className="flex-1">
                     <div className="text-sm text-gray-500 mb-1">Destination</div>
-                    <div className="text-gray-900">{tripData.destination}</div>
+                    <div className="text-gray-900">{trip.destination}</div>
                   </div>
                 </div>
               </div>
@@ -130,11 +172,11 @@ export function ViewTrip({ user, tripId, onNavigate, onLogout }: ViewTripProps) 
               <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-gray-200">
                 <div>
                   <div className="text-sm text-gray-500 mb-1">Distance</div>
-                  <div className="text-gray-900">{tripData.distance}</div>
+                  <div className="text-gray-900">{trip.distance || 'Pending'}</div>
                 </div>
                 <div>
                   <div className="text-sm text-gray-500 mb-1">Estimated Cost</div>
-                  <div className="text-gray-900">{tripData.cost}</div>
+                  <div className="text-gray-900">{trip.cost || 'Pending'}</div>
                 </div>
               </div>
             </Card>
@@ -144,7 +186,7 @@ export function ViewTrip({ user, tripId, onNavigate, onLogout }: ViewTripProps) 
               <h2 className="text-lg text-gray-900 mb-4">Trip Status</h2>
               
               <div className="space-y-4">
-                {tripData.timeline.map((item, index) => (
+                {getTimeline().map((item, index) => (
                   <div key={index} className="flex items-start gap-4">
                     <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
                       item.completed ? 'bg-green-100' : 'bg-gray-100'
@@ -160,7 +202,9 @@ export function ViewTrip({ user, tripId, onNavigate, onLogout }: ViewTripProps) 
                         {item.label}
                       </div>
                       {item.date && (
-                        <div className="text-sm text-gray-500">{item.date}</div>
+                        <div className="text-sm text-gray-500">
+                          {new Date(item.date).toLocaleString()}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -180,7 +224,7 @@ export function ViewTrip({ user, tripId, onNavigate, onLogout }: ViewTripProps) 
                   <Calendar className="w-5 h-5 text-gray-400" />
                   <div>
                     <div className="text-sm text-gray-500">Date</div>
-                    <div className="text-gray-900">{tripData.date}</div>
+                    <div className="text-gray-900">{trip.date}</div>
                   </div>
                 </div>
 
@@ -188,61 +232,64 @@ export function ViewTrip({ user, tripId, onNavigate, onLogout }: ViewTripProps) 
                   <Clock className="w-5 h-5 text-gray-400" />
                   <div>
                     <div className="text-sm text-gray-500">Time</div>
-                    <div className="text-gray-900">{tripData.time}</div>
+                    <div className="text-gray-900">{trip.time}</div>
                   </div>
                 </div>
               </div>
             </Card>
 
-            {/* Vehicle & Driver */}
-            <Card className="p-6">
-              <h2 className="text-lg text-gray-900 mb-4">Vehicle & Driver</h2>
-              
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <Car className="w-5 h-5 text-gray-400" />
-                  <div>
-                    <div className="text-sm text-gray-500">Vehicle</div>
-                    <div className="text-gray-900">{tripData.vehicleNumber}</div>
-                    <div className="text-sm text-gray-600">{tripData.vehicleModel}</div>
+            {/* Vehicle & Driver (Only if approved) */}
+            {trip.driverName && (
+              <Card className="p-6">
+                <h2 className="text-lg text-gray-900 mb-4">Vehicle & Driver</h2>
+                
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <Car className="w-5 h-5 text-gray-400" />
+                    <div>
+                      <div className="text-sm text-gray-500">Vehicle</div>
+                      <div className="text-gray-900">{trip.vehicleNumber || 'Assigned'}</div>
+                      <div className="text-sm text-gray-600">{trip.vehicleModel}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <UserIcon className="w-5 h-5 text-gray-400 mt-0.5" />
+                    <div>
+                      <div className="text-sm text-gray-500">Driver</div>
+                      <div className="text-gray-900">{trip.driverName}</div>
+                    </div>
+                  </div>
+
+                  {/* Mock phone as we might not have driver phone in trip object yet */}
+                  <div className="flex items-center gap-3 p-3 bg-green-50 rounded-xl">
+                    <Phone className="w-5 h-5 text-green-600" />
+                    <div>
+                      <div className="text-sm text-gray-500">Contact Driver</div>
+                      {/* In a real app, fetch driver phone from 'users' collection */}
+                      <div className="text-green-700">Contact via App</div> 
+                    </div>
                   </div>
                 </div>
-
-                <div className="flex items-start gap-3">
-                  <UserIcon className="w-5 h-5 text-gray-400 mt-0.5" />
-                  <div>
-                    <div className="text-sm text-gray-500">Driver</div>
-                    <div className="text-gray-900">{tripData.driver}</div>
-                  </div>
-                </div>
-
-                <a
-                  href={`tel:${tripData.driverPhone}`}
-                  className="flex items-center gap-3 p-3 bg-green-50 rounded-xl hover:bg-green-100 transition-all"
-                >
-                  <Phone className="w-5 h-5 text-green-600" />
-                  <div>
-                    <div className="text-sm text-gray-500">Call Driver</div>
-                    <div className="text-green-700">{tripData.driverPhone}</div>
-                  </div>
-                </a>
-              </div>
-            </Card>
+              </Card>
+            )}
 
             {/* Actions */}
             <Card className="p-6">
               <h2 className="text-lg text-gray-900 mb-4">Actions</h2>
               
               <div className="space-y-3">
-                <button
-                  onClick={handleDownloadReceipt}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all"
-                >
-                  <Download className="w-5 h-5" />
-                  Download Receipt
-                </button>
+                {trip.status === 'completed' && (
+                  <button
+                    onClick={handleDownloadReceipt}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all"
+                  >
+                    <Download className="w-5 h-5" />
+                    Download Receipt
+                  </button>
+                )}
 
-                {tripData.status !== 'completed' && tripData.status !== 'cancelled' && (
+                {trip.status === 'pending' || trip.status === 'approved' ? (
                   <button
                     onClick={() => setShowCancelModal(true)}
                     className="w-full flex items-center justify-center gap-2 px-4 py-3 border border-red-300 text-red-600 rounded-xl hover:bg-red-50 transition-all"
@@ -250,7 +297,7 @@ export function ViewTrip({ user, tripId, onNavigate, onLogout }: ViewTripProps) 
                     <X className="w-5 h-5" />
                     Cancel Trip
                   </button>
-                )}
+                ) : null}
               </div>
             </Card>
           </div>

@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { User as UserIcon, Plus, Car, Phone, Mail } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
+// Firebase Imports
+import { collection, getDocs, query, where, doc, updateDoc, addDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 
 interface DriverManagementProps {
   user: User;
@@ -11,24 +14,17 @@ interface DriverManagementProps {
   onLogout: () => void;
 }
 
-const drivers = [
-  { id: '1', name: 'Mike Wilson', phone: '+94 77 123 4567', email: 'mike.wilson@company.com', license: 'DL12345678', vehicle: 'CAB-2345', status: 'available' as const },
-  { id: '2', name: 'Sarah Johnson', phone: '+94 77 234 5678', email: 'sarah.johnson@company.com', license: 'DL23456789', vehicle: 'VAN-5678', status: 'in-use' as const },
-  { id: '3', name: 'David Miller', phone: '+94 77 345 6789', email: 'david.miller@company.com', license: 'DL34567890', vehicle: 'CAR-1234', status: 'available' as const },
-];
-
-const availableVehicles = [
-  { id: '1', number: 'CAB-2345', model: 'Toyota Corolla' },
-  { id: '2', number: 'VAN-5678', model: 'Toyota Hiace' },
-  { id: '3', number: 'CAR-1234', model: 'Honda Civic' },
-  { id: '4', number: 'SUV-9012', model: 'Mitsubishi Montero' },
-];
-
 export function DriverManagement({ user, onNavigate, onLogout }: DriverManagementProps) {
+  // 1. State
+  const [drivers, setDrivers] = useState<any[]>([]);
+  const [availableVehicles, setAvailableVehicles] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<any>(null);
   const [selectedVehicle, setSelectedVehicle] = useState('');
+  
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -37,20 +33,101 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
     nic: '',
   });
 
-  const handleAddDriver = () => {
-    alert('Driver added successfully!');
-    setShowAddModal(false);
-    setFormData({ name: '', email: '', phone: '', license: '', nic: '' });
+  // 2. Fetch Data
+  const fetchData = async () => {
+    try {
+      // A. Fetch Drivers (Users with role = 'driver')
+      const q = query(collection(db, "users"), where("role", "==", "driver"));
+      const querySnapshot = await getDocs(q);
+      const driverList = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        // Derive status: if they have an assigned vehicle, they are 'in-use'
+        status: doc.data().vehicle ? 'in-use' : 'available' 
+      }));
+      setDrivers(driverList);
+
+      // B. Fetch Vehicles
+      const vehicleSnapshot = await getDocs(collection(db, "vehicles"));
+      const vehicleList = vehicleSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      // Filter only available vehicles (or currently assigned to no one)
+      // For simplicity, we show all, but you can filter: .filter(v => v.status === 'available')
+      setAvailableVehicles(vehicleList);
+
+      setLoading(false);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      setLoading(false);
+    }
   };
 
-  const handleAssignVehicle = () => {
-    if (!selectedVehicle) {
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // 3. Add Driver Handler
+  const handleAddDriver = async () => {
+    if (!formData.name || !formData.email) {
+      alert("Please fill in required fields");
+      return;
+    }
+
+    try {
+      // Create a document in 'users' collection
+      // Note: This driver won't have a login password yet. They should register properly or we use Cloud Functions.
+      // For this demo, we create the profile so it appears in the list.
+      await addDoc(collection(db, "users"), {
+        fullName: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        licenseNumber: formData.license,
+        nic: formData.nic,
+        role: 'driver',
+        driverStatus: 'approved', // Admin added them, so they are approved
+        createdAt: new Date().toISOString()
+      });
+
+      alert('Driver profile created successfully!');
+      setShowAddModal(false);
+      setFormData({ name: '', email: '', phone: '', license: '', nic: '' });
+      fetchData(); // Refresh list
+    } catch (error) {
+      console.error("Error adding driver:", error);
+      alert("Failed to add driver");
+    }
+  };
+
+  // 4. Assign Vehicle Handler
+  const handleAssignVehicle = async () => {
+    if (!selectedVehicle || !selectedDriver) {
       alert('Please select a vehicle');
       return;
     }
-    alert(`Vehicle ${selectedVehicle} assigned to ${selectedDriver.name}`);
-    setShowAssignModal(false);
+
+    try {
+      // Update the driver's document with the assigned vehicle
+      const driverRef = doc(db, "users", selectedDriver.id);
+      await updateDoc(driverRef, {
+        vehicle: selectedVehicle,
+        status: 'in-use' // Update their status
+      });
+
+      alert(`Vehicle ${selectedVehicle} assigned to ${selectedDriver.fullName || selectedDriver.name}`);
+      setShowAssignModal(false);
+      fetchData(); // Refresh list
+    } catch (error) {
+      console.error("Error assigning vehicle:", error);
+      alert("Failed to assign vehicle");
+    }
   };
+
+  if (loading) {
+    return <div className="p-10 text-center">Loading Drivers...</div>;
+  }
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -120,7 +197,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
                     <UserIcon className="w-6 h-6 text-gray-600" />
                   </div>
                   <div>
-                    <div className="text-gray-900">{driver.name}</div>
+                    <div className="text-gray-900">{driver.fullName || driver.name || 'Unknown'}</div>
                     <Badge status={driver.status} size="sm" />
                   </div>
                 </div>
@@ -129,14 +206,14 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
               <div className="space-y-2 mb-4">
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Phone className="w-4 h-4 text-gray-400" />
-                  {driver.phone}
+                  {driver.phone || 'No Phone'}
                 </div>
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Mail className="w-4 h-4 text-gray-400" />
                   {driver.email}
                 </div>
                 <div className="text-sm text-gray-600">
-                  License: {driver.license}
+                  License: {driver.licenseNumber || driver.license || 'N/A'}
                 </div>
               </div>
 
@@ -155,7 +232,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
                 </div>
                 <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
                   <Car className="w-4 h-4 text-gray-600" />
-                  <div className="text-sm text-gray-900">{driver.vehicle}</div>
+                  <div className="text-sm text-gray-900">{driver.vehicle || 'None Assigned'}</div>
                 </div>
               </div>
             </Card>
@@ -229,10 +306,10 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
       {showAssignModal && selectedDriver && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <Card className="w-full max-w-md p-6">
-            <h3 className="text-xl text-gray-900 mb-6">Assign Vehicle to {selectedDriver.name}</h3>
+            <h3 className="text-xl text-gray-900 mb-6">Assign Vehicle to {selectedDriver.fullName || selectedDriver.name}</h3>
 
-            <div className="space-y-3 mb-6">
-              {availableVehicles.map((vehicle) => (
+            <div className="space-y-3 mb-6 max-h-60 overflow-y-auto">
+              {availableVehicles.length === 0 ? <p>No vehicles found.</p> : availableVehicles.map((vehicle) => (
                 <div
                   key={vehicle.id}
                   onClick={() => setSelectedVehicle(vehicle.number)}
@@ -246,7 +323,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
                     <Car className="w-5 h-5 text-gray-600" />
                     <div>
                       <div className="text-gray-900">{vehicle.number}</div>
-                      <div className="text-sm text-gray-500">{vehicle.model}</div>
+                      <div className="text-sm text-gray-500">{vehicle.model || 'Unknown Model'}</div>
                     </div>
                   </div>
                 </div>
