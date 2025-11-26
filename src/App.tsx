@@ -1,128 +1,156 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Login } from './components/auth/Login';
-import { UserRegistration } from './components/auth/UserRegistration';
-import { DriverRegistration } from './components/auth/DriverRegistration';
-import { AdminRegistration } from './components/auth/AdminRegistration';
+import { UserRegistration } from './components/user/UserRegistration';
+import { DriverRegistration } from './components/driver/DriverRegistration';
+import { AdminRegistration } from './components/admin/AdminRegistration';
 import { UserDashboard } from './components/user/UserDashboard';
-import { BookVehicle } from './components/user/BookVehicle';
-import { ViewTrip } from './components/user/ViewTrip';
 import { DriverDashboard } from './components/driver/DriverDashboard';
-import { DriverTripDetail } from './components/driver/DriverTripDetail';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { TripApproval } from './components/admin/TripApproval';
 import { VehicleManagement } from './components/admin/VehicleManagement';
 import { DriverManagement } from './components/admin/DriverManagement';
 import { UserManagement } from './components/admin/UserManagement';
 import { Reports } from './components/admin/Reports';
+import { BookVehicle } from './components/user/BookVehicle';
+import { ViewTrip } from './components/user/ViewTrip';
+import { DriverTripDetail } from './components/driver/DriverTripDetail';
 import { TripHistory } from './components/shared/TripHistory';
 
-export type UserRole = 'user' | 'driver' | 'admin' | null;
+// Firebase Imports
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from './firebase';
 
+// Type definition for User
 export interface User {
   id: string;
   name: string;
   email: string;
-  role: UserRole;
+  role: 'user' | 'driver' | 'admin';
   epfNumber?: string;
   phone?: string;
+  department?: string;
+  joinDate?: string;
+  [key: string]: any;
 }
 
-export default function App() {
-  const [currentScreen, setCurrentScreen] = useState('login');
+function App() {
+  // FIX: Start with null (Logged Out) instead of mock data
   const [user, setUser] = useState<User | null>(null);
+  const [currentScreen, setCurrentScreen] = useState('dashboard');
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const handleLogin = (userData: User) => {
-    setUser(userData);
-    if (userData.role === 'user') {
-      setCurrentScreen('user-dashboard');
-    } else if (userData.role === 'driver') {
-      setCurrentScreen('driver-dashboard');
-    } else if (userData.role === 'admin') {
-      setCurrentScreen('admin-dashboard');
-    }
+  // Listen to Firebase Auth State
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          // Fetch extra user details from Firestore (Role, Name, EPF)
+          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setUser({
+              id: firebaseUser.uid,
+              name: userData.name || userData.fullName || firebaseUser.email?.split('@')[0] || 'User',
+              email: firebaseUser.email || '',
+              role: userData.role || 'user', // Default to user if role missing
+              ...userData
+            } as User);
+          }
+        } catch (error) {
+          console.error("Error fetching user profile:", error);
+        }
+      } else {
+        // User is signed out
+        setUser(null);
+        setCurrentScreen('login');
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogin = (loggedInUser: User) => {
+    setUser(loggedInUser);
+    setCurrentScreen('dashboard');
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await signOut(auth);
     setUser(null);
     setCurrentScreen('login');
   };
 
-  const navigate = (screen: string, tripId?: string) => {
+  const handleNavigate = (screen: string, tripId?: string) => {
     setCurrentScreen(screen);
     if (tripId) setSelectedTripId(tripId);
   };
 
-  // Auth screens
-  if (currentScreen === 'login') {
-    return <Login onLogin={handleLogin} onNavigate={navigate} />;
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center">Loading Transport System...</div>;
   }
 
-  if (currentScreen === 'user-registration') {
-    return <UserRegistration onBack={() => navigate('login')} onRegister={() => navigate('login')} />;
-  }
-
-  if (currentScreen === 'driver-registration') {
-    return <DriverRegistration onBack={() => navigate('login')} onRegister={() => navigate('login')} />;
-  }
-
-  if (currentScreen === 'admin-registration') {
-    return <AdminRegistration onBack={() => navigate('login')} onRegister={() => navigate('login')} />;
-  }
-
-  // User screens
-  if (user?.role === 'user') {
-    if (currentScreen === 'user-dashboard') {
-      return <UserDashboard user={user} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'book-vehicle') {
-      return <BookVehicle user={user} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'view-trip') {
-      return <ViewTrip user={user} tripId={selectedTripId} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'trip-history') {
-      return <TripHistory user={user} onNavigate={navigate} onLogout={handleLogout} />;
+  // --- AUTHENTICATION FLOW ---
+  if (!user) {
+    switch (currentScreen) {
+      case 'user-registration':
+        return <UserRegistration onBack={() => setCurrentScreen('login')} onRegister={() => setCurrentScreen('login')} />;
+      case 'driver-registration':
+        return <DriverRegistration onBack={() => setCurrentScreen('login')} onRegister={() => setCurrentScreen('login')} />;
+      case 'admin-registration':
+        return <AdminRegistration onBack={() => setCurrentScreen('login')} onRegister={() => setCurrentScreen('login')} />;
+      default:
+        return <Login onLogin={handleLogin} onNavigate={setCurrentScreen} />;
     }
   }
 
-  // Driver screens
-  if (user?.role === 'driver') {
-    if (currentScreen === 'driver-dashboard') {
-      return <DriverDashboard user={user} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'driver-trip-detail') {
-      return <DriverTripDetail user={user} tripId={selectedTripId} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'trip-history') {
-      return <TripHistory user={user} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-  }
-
-  // Admin screens
-  if (user?.role === 'admin') {
-    if (currentScreen === 'admin-dashboard') {
-      return <AdminDashboard user={user} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'trip-approval') {
-      return <TripApproval user={user} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'vehicle-management') {
-      return <VehicleManagement user={user} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'driver-management') {
-      return <DriverManagement user={user} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'user-management') {
-      return <UserManagement user={user} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'reports') {
-      return <Reports user={user} onNavigate={navigate} onLogout={handleLogout} />;
-    }
-    if (currentScreen === 'trip-history') {
-      return <TripHistory user={user} onNavigate={navigate} onLogout={handleLogout} />;
+  // --- MAIN APP FLOW (LOGGED IN) ---
+  
+  // 1. ADMIN SCREENS
+  if (user.role === 'admin') {
+    switch (currentScreen) {
+      case 'trip-approval':
+        return <TripApproval user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+      case 'vehicle-management':
+        return <VehicleManagement user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+      case 'driver-management':
+        return <DriverManagement user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+      case 'user-management':
+        return <UserManagement user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+      case 'reports':
+        return <Reports user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+      case 'trip-history':
+        return <TripHistory user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+      default:
+        return <AdminDashboard user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
     }
   }
 
-  return <Login onLogin={handleLogin} onNavigate={navigate} />;
+  // 2. DRIVER SCREENS
+  if (user.role === 'driver') {
+    switch (currentScreen) {
+      case 'driver-trip-detail':
+        return <DriverTripDetail user={user} tripId={selectedTripId} onNavigate={handleNavigate} onLogout={handleLogout} />;
+      case 'trip-history':
+        return <TripHistory user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+      default:
+        return <DriverDashboard user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+    }
+  }
+
+  // 3. USER SCREENS (Default)
+  switch (currentScreen) {
+    case 'book-vehicle':
+      return <BookVehicle user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+    case 'view-trip':
+      return <ViewTrip user={user} tripId={selectedTripId} onNavigate={handleNavigate} onLogout={handleLogout} />;
+    case 'trip-history':
+      return <TripHistory user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+    default:
+      return <UserDashboard user={user} onNavigate={handleNavigate} onLogout={handleLogout} />;
+  }
 }
+
+export default App;
