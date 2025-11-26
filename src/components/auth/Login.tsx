@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Mail, Lock, Car, Eye, EyeOff } from 'lucide-react';
+import { Mail, Lock, Car, Eye, EyeOff, WifiOff } from 'lucide-react';
 import { User } from '../../App';
 // Firebase Imports
 import { signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { auth, db, googleProvider } from '../../firebase'; // Adjust path if needed
+import { auth, db, googleProvider } from '../../firebase';
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -17,40 +17,49 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   
-  // UI Feedback
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Helper to fetch user details from Firestore
+  // Helper to fetch user details safely
   const fetchUserDetails = async (uid: string) => {
-    const userDoc = await getDoc(doc(db, "users", uid));
-    
-    if (userDoc.exists()) {
-      const userData = userDoc.data();
-      
-      // Security Check: Ensure they are logging into the correct panel
-      if (userData.role !== loginType) {
-        throw new Error(`Access Denied: You are registered as a ${userData.role}, but trying to login as ${loginType}.`);
-      }
+    try {
+        // Removed manual enableNetwork() call as it can cause conflicts
+        
+        const userDoc = await getDoc(doc(db, "users", uid));
+        
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          
+          // Security Check: Ensure role matches selected tab
+          if (userData.role !== loginType) {
+              throw new Error(`Access Denied: You are registered as a ${userData.role}, but trying to login as ${loginType}.`);
+          }
 
-      // Check for Driver Approval
-      if (loginType === 'driver' && userData.driverStatus === 'pending') {
-        throw new Error('Your driver account is pending approval by an admin.');
-      }
-      if (loginType === 'driver' && userData.driverStatus === 'rejected') {
-        throw new Error('Your driver account application was rejected.');
-      }
+          // Driver Approval Checks
+          if (loginType === 'driver' && userData.driverStatus === 'pending') {
+              throw new Error('Your driver account is pending approval by an admin.');
+          }
+          if (loginType === 'driver' && userData.driverStatus === 'rejected') {
+              throw new Error('Your driver account application was rejected.');
+          }
 
-      return {
-        id: uid,
-        name: userData.fullName || userData.email, // Fallback to email if name missing
-        email: userData.email,
-        role: userData.role,
-        phone: userData.phone,
-        ...userData // Spread other fields like epfNumber etc.
-      } as User;
-    } else {
-      throw new Error('User profile not found. Please register first.');
+          return {
+              id: uid,
+              name: userData.fullName || userData.email,
+              email: userData.email,
+              role: userData.role,
+              phone: userData.phone,
+              ...userData
+          } as User;
+        } else {
+          throw new Error('User profile not found. Please register first.');
+        }
+    } catch (err: any) {
+        console.error("Firestore Fetch Error:", err); // Log real error to console
+        if (err.message && err.message.includes("offline")) {
+            throw new Error("Connection failed. Check API Key or Internet.");
+        }
+        throw err;
     }
   };
 
@@ -60,19 +69,18 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
     setLoading(true);
 
     try {
-      // 1. Authenticate with Firebase
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      
-      // 2. Fetch Extra Data & Verify Role
       const appUser = await fetchUserDetails(userCredential.user.uid);
-      
-      // 3. Log In
       onLogin(appUser);
 
     } catch (err: any) {
-      console.error(err);
+      console.error("Login Error:", err);
       if (err.code === 'auth/invalid-credential') {
         setError('Invalid email or password.');
+      } else if (err.code === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Please wait 5 minutes.');
+      } else if (err.code === 'auth/network-request-failed') {
+        setError('Network error. Please check your internet connection.');
       } else {
         setError(err.message);
       }
@@ -87,14 +95,17 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
 
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      
-      // Fetch details and check if they actually registered
       const appUser = await fetchUserDetails(result.user.uid);
-      
       onLogin(appUser);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Google sign-in failed.');
+      if (err.code === 'auth/popup-closed-by-user') {
+        setError('Sign-in cancelled.');
+      } else if (err.code === 'auth/network-request-failed') {
+        setError('Network error. Please check your connection.');
+      } else {
+        setError(err.message || 'Google sign-in failed.');
+      }
     } finally {
       setLoading(false);
     }
@@ -110,7 +121,7 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
           </div>
           <div>
             <div className="text-xl text-gray-900">Transport System</div>
-            <div className="text-xs text-gray-500">Eskimo Fashion Knitwear (Pvt) Ltd - Vehicle Management</div>
+            <div className="text-xs text-gray-500">Eskimo Fashion Knitwear (Pvt) Ltd</div>
           </div>
         </div>
       </div>
@@ -126,7 +137,8 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
 
             {/* Error Message */}
             {error && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg text-center">
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg flex items-center gap-2">
+                {error.includes('offline') || error.includes('Network') ? <WifiOff className="w-4 h-4" /> : null}
                 {error}
               </div>
             )}
@@ -208,7 +220,6 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
             {/* Login Form */}
             <form onSubmit={handleLogin} className="space-y-4">
               
-              {/* Unified Email Input (Replaced EPF logic with Email for simplicity/Firebase compatibility) */}
               <div>
                 <label className="block text-sm text-gray-700 mb-2">Email Address</label>
                 <div className="relative">
@@ -265,22 +276,35 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
               </button>
             </form>
 
-            {/* Registration Links */}
+            {/* Registration Links Section */}
             <div className="mt-6 pt-6 border-t border-gray-200">
               <p className="text-center text-sm text-gray-600 mb-3">Don't have an account?</p>
               <div className="flex flex-col sm:flex-row gap-2">
-                <button
-                  onClick={() => onNavigate('user-registration')}
-                  className="flex-1 py-2 text-sm text-[#2563EB] border border-[#2563EB] rounded-xl hover:bg-[#2563EB] hover:text-white transition-all"
-                >
-                  Register as User
-                </button>
-                <button
-                  onClick={() => onNavigate('driver-registration')}
-                  className="flex-1 py-2 text-sm text-[#2563EB] border border-[#2563EB] rounded-xl hover:bg-[#2563EB] hover:text-white transition-all"
-                >
-                  Register as Driver
-                </button>
+                
+                {/* Logic to show different buttons based on role */}
+                {loginType === 'admin' ? (
+                  <button
+                    onClick={() => onNavigate('admin-registration')}
+                    className="flex-1 py-2 text-sm text-[#2563EB] border border-[#2563EB] rounded-xl hover:bg-[#2563EB] hover:text-white transition-all"
+                  >
+                    Register New Admin
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => onNavigate('user-registration')}
+                      className="flex-1 py-2 text-sm text-[#2563EB] border border-[#2563EB] rounded-xl hover:bg-[#2563EB] hover:text-white transition-all"
+                    >
+                      Register as User
+                    </button>
+                    <button
+                      onClick={() => onNavigate('driver-registration')}
+                      className="flex-1 py-2 text-sm text-[#2563EB] border border-[#2563EB] rounded-xl hover:bg-[#2563EB] hover:text-white transition-all"
+                    >
+                      Register as Driver
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>

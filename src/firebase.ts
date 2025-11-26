@@ -1,7 +1,8 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth"; // Added GoogleAuthProvider
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
+// Hardcoded configuration (Ensures connection works immediately)
 const firebaseConfig = {
   apiKey: "AIzaSyA5dnLKG-HCL5mZEiBq_0vh-pDVjxmZC48",
   authDomain: "transportapp-33e03.firebaseapp.com",
