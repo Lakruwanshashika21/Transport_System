@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { User as UserIcon, Plus, Car, Phone, Mail, Trash2, Key, AlertTriangle } from 'lucide-react';
+import { User as UserIcon, Plus, Car, Phone, Mail, Trash2, Key } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
 // Firebase Imports
-import { collection, getDocs, query, where, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, updateDoc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore'; // Added onSnapshot
 import { initializeApp, deleteApp, getApp, getApps } from 'firebase/app'; 
 import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { db, firebaseConfig, auth as mainAuth } from '../../firebase';
@@ -36,33 +36,37 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
     password: '' // Added Password field
   });
 
-  // 2. Fetch Data
-  const fetchData = async () => {
-    try {
-      const q = query(collection(db, "users"), where("role", "==", "driver"));
-      const querySnapshot = await getDocs(q);
-      const driverList = querySnapshot.docs.map(doc => ({
+  // 2. Real-Time Fetch
+  useEffect(() => {
+    setLoading(true);
+
+    // A. Listen to Drivers
+    const q = query(collection(db, "users"), where("role", "==", "driver"));
+    const unsubDrivers = onSnapshot(q, (snapshot) => {
+      const driverList = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
+        // Derive status: if they have an assigned vehicle, they are 'in-use'
         status: doc.data().vehicle ? 'in-use' : 'available' 
       }));
       setDrivers(driverList);
+    });
 
-      const vehicleSnapshot = await getDocs(collection(db, "vehicles"));
-      const vehicleList = vehicleSnapshot.docs.map(doc => ({
+    // B. Listen to Vehicles
+    const unsubVehicles = onSnapshot(collection(db, "vehicles"), (snapshot) => {
+      const vehicleList = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
       setAvailableVehicles(vehicleList);
       setLoading(false);
-    } catch (error) {
-      console.error("Error fetching data:", error);
-      setLoading(false);
-    }
-  };
+    });
 
-  useEffect(() => {
-    fetchData();
+    // Cleanup listeners on unmount
+    return () => {
+      unsubDrivers();
+      unsubVehicles();
+    };
   }, []);
 
   // 3. Add Driver Handler (With Real Auth Creation)
@@ -103,10 +107,13 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
       alert('Driver account created successfully!');
       setShowAddModal(false);
       setFormData({ name: '', email: '', phone: '', license: '', nic: '', password: '' });
-      fetchData();
     } catch (error: any) {
       console.error("Error adding driver:", error);
-      alert("Failed to add driver: " + error.message);
+      if (error.code === 'auth/email-already-in-use') {
+         alert("This email is already registered.");
+      } else {
+         alert("Failed to add driver: " + error.message);
+      }
     } finally {
       if (secondaryApp) await deleteApp(secondaryApp).catch(console.error);
     }
@@ -119,19 +126,19 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
       return;
     }
     try {
+      // Update the driver's document
       const driverRef = doc(db, "users", selectedDriver.id);
       await updateDoc(driverRef, {
         vehicle: selectedVehicle,
         status: 'in-use'
       });
       
-      // Also mark vehicle as in-use
-      // Note: You might want to find the vehicle doc ID if 'selectedVehicle' is just the number
-      // For this snippet, assuming selectedVehicle is the number for display
-      
+      // Optionally update vehicle status too if needed
+      // const vehicleId = availableVehicles.find(v => v.number === selectedVehicle)?.id;
+      // if(vehicleId) await updateDoc(doc(db, 'vehicles', vehicleId), { status: 'in-use' });
+
       alert(`Vehicle ${selectedVehicle} assigned to ${selectedDriver.fullName || selectedDriver.name}`);
       setShowAssignModal(false);
-      fetchData();
     } catch (error) {
       console.error("Error assigning vehicle:", error);
       alert("Failed to assign vehicle");
@@ -140,12 +147,11 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
 
   // 5. Delete Driver
   const handleDeleteDriver = async (driver: any) => {
-    if (!window.confirm(`Are you sure you want to remove driver ${driver.fullName || driver.name}?`)) return;
+    if (!window.confirm(`Are you sure you want to remove driver ${driver.fullName || driver.name}? This action cannot be undone.`)) return;
 
     try {
       await deleteDoc(doc(db, "users", driver.id));
       alert("Driver removed. They will no longer be able to log in.");
-      fetchData();
     } catch (error: any) {
       console.error("Error deleting driver:", error);
       alert("Failed to delete driver: " + error.message);
@@ -270,7 +276,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
       {showAssignModal && selectedDriver && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <Card className="w-full max-w-md p-6">
-            <h3 className="text-xl text-gray-900 mb-6">Assign Vehicle to {selectedDriver.fullName || selectedDriver.name}</h3>
+            <h3 className="text-xl text-gray-900 mb-6">Assign Vehicle</h3>
             <div className="space-y-3 mb-6 max-h-60 overflow-y-auto">
               {availableVehicles.length === 0 ? <p>No vehicles found.</p> : availableVehicles.map((vehicle) => (
                 <div key={vehicle.id} onClick={() => setSelectedVehicle(vehicle.number)} className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${selectedVehicle === vehicle.number ? 'border-[#2563EB] bg-blue-50' : 'border-gray-200 hover:border-[#2563EB]'}`}>

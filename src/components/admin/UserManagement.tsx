@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Search, User as UserIcon, Mail, Phone, IdCard, Calendar, Plus, Briefcase, Trash2, Key, AlertTriangle } from 'lucide-react';
+import { Search, User as UserIcon, Mail, Phone, IdCard, Plus, Briefcase, Trash2, Key, AlertTriangle } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 // Firebase Imports
-import { collection, getDocs, query, where, setDoc, doc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, setDoc, doc, deleteDoc, onSnapshot } from 'firebase/firestore'; // Added onSnapshot
 import { initializeApp, deleteApp, getApp, getApps } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { db, firebaseConfig, auth as mainAuth } from '../../firebase';
+// Email Service (Assumed you will add this function to emailService.ts)
+import emailjs from '@emailjs/browser'; 
 
 interface UserManagementProps {
   user: User;
@@ -27,36 +29,40 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
   
   const departments = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"];
 
-  // --- Fetch Data ---
-  const fetchData = async () => {
-    try {
-      const usersQuery = query(collection(db, "users"), where("role", "==", "user"));
-      const usersSnapshot = await getDocs(usersQuery);
-      const usersList = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  // --- Real-Time Data Fetching ---
+  useEffect(() => {
+    setLoading(true);
+    
+    // 1. Listen to Users
+    const usersQuery = query(collection(db, "users"), where("role", "==", "user"));
+    const unsubscribeUsers = onSnapshot(usersQuery, (userSnap) => {
+      const usersList = userSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      const tripsSnapshot = await getDocs(collection(db, "trip_requests"));
-      const allTrips = tripsSnapshot.docs.map(doc => doc.data());
+      // 2. Listen to Trips (Nested Listener for Stats)
+      // Note: For scalability, keep stats separate, but this works for real-time updates now
+      const unsubscribeTrips = onSnapshot(collection(db, "trip_requests"), (tripSnap) => {
+        const allTrips = tripSnap.docs.map(doc => doc.data());
 
-      const usersWithStats = usersList.map((u: any) => {
-        const userTrips = allTrips.filter((t: any) => 
-          t.customer === u.name || t.email === u.email || (u.uid && t.userId === u.uid)
-        );
-        return {
-          ...u,
-          totalTrips: userTrips.length,
-          joinDate: u.createdAt ? new Date(u.createdAt).toISOString().split('T')[0] : 'Unknown'
-        };
+        const usersWithStats = usersList.map((u: any) => {
+          const userTrips = allTrips.filter((t: any) => 
+            t.customer === u.name || t.email === u.email || (u.uid && t.userId === u.uid)
+          );
+          return {
+            ...u,
+            totalTrips: userTrips.length,
+            joinDate: u.createdAt ? new Date(u.createdAt).toISOString().split('T')[0] : 'Unknown'
+          };
+        });
+
+        setUsers(usersWithStats);
+        setLoading(false);
       });
 
-      setUsers(usersWithStats);
-      setLoading(false);
-    } catch (error) {
-      console.error("Error fetching users:", error);
-      setLoading(false);
-    }
-  };
+      return () => unsubscribeTrips();
+    });
 
-  useEffect(() => { fetchData(); }, []);
+    return () => unsubscribeUsers();
+  }, []);
 
   // --- Create User ---
   const handleAddUser = async () => {
@@ -85,11 +91,19 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
         role: 'user',
         createdAt: new Date().toISOString()
       });
+
+      // Send Welcome Email
+      // Replace SERVICE_ID and TEMPLATE_ID with your actual EmailJS IDs
+      emailjs.send("service_transport_app", "template_login_alert", {
+        to_email: newUser.email,
+        to_name: newUser.name,
+        message: `Welcome! Your account has been created. \nEmail: ${newUser.email}\nPassword: ${newUser.password}\nPlease change your password after login.`,
+      }, "YOUR_PUBLIC_KEY");
       
       alert(`User ${newUser.name} created successfully!`);
       setShowAddModal(false);
       setNewUser({ name: '', email: '', password: '', epfNumber: '', phone: '', department: '' });
-      fetchData();
+      
     } catch (error: any) {
       console.error("Error creating user:", error);
       alert("Failed to create user: " + error.message);
@@ -101,27 +115,23 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
   // --- Delete User ---
   const handleDeleteUser = async () => {
     if (!selectedUser) return;
-    if (!window.confirm(`Are you sure you want to remove ${selectedUser.name}? This action cannot be undone.`)) return;
-    
+    if (!window.confirm(`Are you sure you want to remove ${selectedUser.name}?`)) return;
     try {
       await deleteDoc(doc(db, "users", selectedUser.id));
-      alert(`User ${selectedUser.name} has been removed.`);
+      alert("User removed.");
       setSelectedUser(null);
-      fetchData();
     } catch (error) {
-      console.error("Error deleting user:", error);
-      alert("Failed to delete user profile.");
+      alert("Failed to delete user.");
     }
   };
 
   // --- Reset Password ---
   const handleResetPassword = async () => {
-    if (!selectedUser || !selectedUser.email) return;
+    if (!selectedUser?.email) return;
     try {
       await sendPasswordResetEmail(mainAuth, selectedUser.email);
-      alert(`Password reset email sent to ${selectedUser.email}.`);
+      alert(`Reset email sent to ${selectedUser.email}`);
     } catch (error: any) {
-      console.error("Error sending reset email:", error);
       alert("Failed to send reset email: " + error.message);
     }
   };
@@ -182,6 +192,7 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
                     <div className="text-lg text-gray-900 mb-1">{u.name}</div>
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 text-sm text-gray-600"><IdCard className="w-4 h-4 text-gray-400" />{u.epfNumber || 'No EPF'}</div>
+                      <div className="flex items-center gap-2 text-sm text-gray-600"><Mail className="w-4 h-4 text-gray-400" />{u.email}</div>
                       <div className="flex items-center gap-2 text-sm text-gray-600"><Briefcase className="w-4 h-4 text-gray-400" />Dept: {u.department || 'N/A'}</div>
                     </div>
                   </div>
