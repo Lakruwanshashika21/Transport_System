@@ -7,6 +7,8 @@ import { Badge } from '../shared/Badge';
 // Firebase Imports
 import { collection, getDocs, query, where, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
+// Email Service Import
+import { sendTripApprovalEmail } from '../../utils/emailService';
 
 interface TripApprovalProps {
   user: User;
@@ -43,7 +45,6 @@ export function TripApproval({ user, onNavigate, onLogout }: TripApprovalProps) 
       const driversSnapshot = await getDocs(driversQuery);
       const drivers = driversSnapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
-        // Client-side filter for 'available' status if not strictly enforced in DB query
         .filter((d: any) => d.driverStatus === 'approved'); 
       setAvailableDrivers(drivers);
 
@@ -86,8 +87,11 @@ export function TripApproval({ user, onNavigate, onLogout }: TripApprovalProps) 
       const tripRef = doc(db, "trip_requests", selectedTrip.id);
       
       // Find names for better record keeping
-      const driverName = availableDrivers.find(d => d.id === selectedDriver)?.fullName || 'Unknown';
-      const vehicleNum = availableVehicles.find(v => v.id === selectedVehicle)?.number || 'Unknown';
+      const driver = availableDrivers.find(d => d.id === selectedDriver);
+      const vehicle = availableVehicles.find(v => v.id === selectedVehicle);
+      
+      const driverName = driver?.fullName || 'Unknown';
+      const vehicleNum = vehicle?.number || 'Unknown';
 
       await updateDoc(tripRef, {
         status: 'approved',
@@ -102,11 +106,22 @@ export function TripApproval({ user, onNavigate, onLogout }: TripApprovalProps) 
       const vehicleRef = doc(db, "vehicles", selectedVehicle);
       await updateDoc(vehicleRef, { status: 'in-use' });
 
-      // 3. Mark Driver as In-Use (Optional, depends on if they can do multiple trips)
+      // 3. Mark Driver as In-Use
       const driverRef = doc(db, "users", selectedDriver);
       await updateDoc(driverRef, { status: 'in-use' });
 
-      alert(`Trip approved successfully! Assigned to ${driverName}.`);
+      // 4. Send Email Notification (Trip Confirmation Ticket)
+      const emailDetails = {
+        email: selectedTrip.email,
+        customer: selectedTrip.customer,
+        serialNumber: selectedTrip.serialNumber || selectedTrip.id,
+        driverName: driverName,
+        vehicleNumber: vehicleNum
+      };
+      
+      await sendTripApprovalEmail(emailDetails);
+
+      alert(`Trip ${selectedTrip.serialNumber || selectedTrip.id} approved successfully! Confirmation email sent.`);
       setShowApproveModal(false);
       setSelectedDriver('');
       setSelectedVehicle('');
@@ -181,7 +196,6 @@ export function TripApproval({ user, onNavigate, onLogout }: TripApprovalProps) 
                 <CheckCircle className="w-6 h-6 text-green-600" />
               </div>
               <div>
-                {/* For now hardcoded as we don't query approved/rejected counts here dynamically to save reads */}
                 <div className="text-2xl text-gray-900">-</div>
                 <div className="text-sm text-gray-500">Approved Today</div>
               </div>
@@ -207,7 +221,7 @@ export function TripApproval({ user, onNavigate, onLogout }: TripApprovalProps) 
             <Card key={trip.id} className="p-6">
               <div className="flex items-start justify-between mb-6">
                 <div>
-                  <div className="text-xl text-gray-900 mb-2">Trip Request</div>
+                  <div className="text-xl text-gray-900 mb-2">Trip Request #{trip.serialNumber || trip.id}</div>
                   <Badge status="pending" />
                   <div className="text-sm text-gray-500 mt-2">ID: {trip.id}</div>
                 </div>
@@ -223,7 +237,7 @@ export function TripApproval({ user, onNavigate, onLogout }: TripApprovalProps) 
                       <span className="text-gray-900">{trip.customerName || trip.customer}</span>
                     </div>
                     <div className="text-sm text-gray-600">EPF: {trip.epf || trip.epfNumber}</div>
-                    <div className="text-sm text-gray-600">Phone: {trip.phone}</div>
+                    <div className="text-sm text-gray-600">Phone: {trip.phone || trip.customerPhone}</div>
                     <div className="text-sm text-gray-600">Email: {trip.email}</div>
                   </div>
                 </div>
@@ -295,7 +309,7 @@ export function TripApproval({ user, onNavigate, onLogout }: TripApprovalProps) 
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <Card className="w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl text-gray-900">Approve Trip (ID: {selectedTrip.id})</h3>
+              <h3 className="text-xl text-gray-900">Approve Trip (ID: {selectedTrip.serialNumber || selectedTrip.id})</h3>
               <button
                 onClick={() => setShowApproveModal(false)}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-all"
@@ -370,7 +384,7 @@ export function TripApproval({ user, onNavigate, onLogout }: TripApprovalProps) 
                 onClick={handleApprove}
                 className="flex-1 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-all"
               >
-                Approve Trip
+                Approve & Send Ticket
               </button>
             </div>
           </Card>

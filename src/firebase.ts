@@ -2,8 +2,8 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// Hardcoded configuration (Ensures connection works immediately)
-const firebaseConfig = {
+// Exporting this so Admin pages can use it to create secondary users
+export const firebaseConfig = {
   apiKey: "AIzaSyA5dnLKG-HCL5mZEiBq_0vh-pDVjxmZC48",
   authDomain: "transportapp-33e03.firebaseapp.com",
   projectId: "transportapp-33e03",
@@ -15,7 +15,6 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Export Auth and Database
 export const auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider(); // Start Google Login Service
+export const googleProvider = new GoogleAuthProvider();
 export const db = getFirestore(app);
