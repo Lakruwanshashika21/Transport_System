@@ -10,8 +10,6 @@ import { db } from '../../firebase';
 // PDF Imports
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-// Email
-import emailjs from '@emailjs/browser';
 
 interface VehicleManagementProps {
   user: User;
@@ -151,7 +149,6 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
       const vehicleRef = doc(db, "vehicles", selectedVehicle.id);
       const newService = { ...serviceData, timestamp: new Date().toISOString() };
 
-      // Reset 'lastServiceMileage' to current total. This makes 'kmSinceService' become 0.
       await updateDoc(vehicleRef, {
         status: 'available', 
         lastServiceMileage: stats.totalKm, 
@@ -168,27 +165,58 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     await updateDoc(doc(db, "vehicles", id), { status: 'available' });
   };
 
-  // 4. Generate PDF Report
+  // 4. Generate PDF Report with Header/Footer
   const generateReport = (v: any) => {
     const stats = getVehicleStats(v);
     const doc = new jsPDF();
     
+    // Define Header/Footer Images
+    const headerImg = '/report-header.jpg'; // Needs to be in public folder
+    const footerImg = '/report-footer.png'; // Needs to be in public folder
+
+    // Helper to add Header/Footer on every page
+    const addHeaderFooter = (data: any) => {
+      const pageWidth = doc.internal.pageSize.width;
+      const pageHeight = doc.internal.pageSize.height;
+      
+      // Add Header (10mm margin, adjusted width/height to aspect ratio)
+      try {
+        doc.addImage(headerImg, 'JPG', 10, 5, 190, 20); 
+      } catch(e) { console.error("Header image missing"); }
+
+      // Add Footer at bottom
+      try {
+        doc.addImage(footerImg, 'PNG', 10, pageHeight - 25, 190, 20);
+      } catch(e) { console.error("Footer image missing"); }
+    };
+
+    // Content - Start Y lower to avoid header
+    let finalY = 40;
+
     doc.setFontSize(18);
-    doc.text(`Vehicle Report: ${v.number} (${v.model})`, 14, 20);
+    doc.text(`Vehicle Report: ${v.number} (${v.model})`, 14, finalY);
+    finalY += 10;
     
     doc.setFontSize(12);
-    doc.text(`Total Mileage: ${stats.totalKm.toFixed(1)} km`, 14, 30);
-    doc.text(`Next Service In: ${stats.remainingKm.toFixed(1)} km`, 14, 38);
-    doc.text(`Status: ${v.status.toUpperCase()}`, 14, 46);
+    doc.text(`Total Mileage: ${stats.totalKm.toFixed(1)} km`, 14, finalY);
+    finalY += 8;
+    doc.text(`Next Service In: ${stats.remainingKm.toFixed(1)} km`, 14, finalY);
+    finalY += 8;
+    doc.text(`Status: ${v.status.toUpperCase()}`, 14, finalY);
+    finalY += 15;
 
-    doc.text("Repair History", 14, 60);
+    // Repair Table
+    doc.text("Repair History", 14, finalY);
     const repairs = v.repairs || [];
     autoTable(doc, {
-      startY: 65,
+      startY: finalY + 5,
       head: [['Date', 'Issue', 'Cost', 'Reported By']],
       body: repairs.map((r: any) => [r.date, r.issue, `LKR ${r.cost}`, r.reportedBy]),
+      didDrawPage: addHeaderFooter, // Applies header/footer
+      margin: { top: 35, bottom: 30 } // Margins to prevent overlap
     });
 
+    // Service Table
     const lastY = (doc as any).lastAutoTable.finalY + 15;
     doc.text("Service History", 14, lastY);
     const services = v.services || [];
@@ -196,6 +224,8 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
       startY: lastY + 5,
       head: [['Date', 'Mileage Logged', 'Cost', 'Notes']],
       body: services.map((s: any) => [s.date, s.mileage, `LKR ${s.cost}`, s.notes]),
+      didDrawPage: addHeaderFooter, // Applies header/footer
+      margin: { top: 35, bottom: 30 }
     });
 
     doc.save(`Vehicle_Report_${v.number}.pdf`);

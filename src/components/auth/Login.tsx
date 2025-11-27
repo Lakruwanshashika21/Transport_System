@@ -119,15 +119,25 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] flex flex-col">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 py-4 px-4 sm:px-6">
-        <div className="max-w-md mx-auto flex items-center justify-center gap-3">
-          <div className="w-12 h-12 bg-[#2563EB] rounded-2xl flex items-center justify-center">
-            <Car className="w-7 h-7 text-white" />
-          </div>
-          <div>
-            <div className="text-xl text-gray-900">Transport System</div>
-            <div className="text-xs text-gray-500">Eskimo Fashion Knitwear (Pvt) Ltd</div>
+      {/* Header with Image */}
+      <div className="bg-white border-b border-gray-200 py-6 px-4 sm:px-6">
+        <div className="max-w-md mx-auto flex flex-col items-center justify-center gap-3 text-center">
+          
+          {/* REPLACED CAR ICON WITH IMAGE */}
+          <img 
+            src="/report-header.jpg" 
+            alt="Transport System Logo" 
+            className="h-20 w-auto object-contain"
+            onError={(e) => {
+              // Fallback if image is missing
+              e.currentTarget.style.display = 'none';
+            }}
+          />
+
+          {/* Fallback Text if needed (Optional) */}
+          <div className="mt-2">
+            <div className="text-xl font-semibold text-gray-1000">Transport System</div>
+            <div className="text-xs text-gray-500">Carlos Embellishers, Dambuwa estate, Dadagamuwa, Veyangoda.</div>
           </div>
         </div>
       </div>

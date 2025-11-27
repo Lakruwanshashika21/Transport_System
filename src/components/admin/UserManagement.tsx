@@ -27,7 +27,7 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
   const [showAddModal, setShowAddModal] = useState(false);
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', epfNumber: '', phone: '', department: '' });
   
-  const departments = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"];
+  const departments = ["Human Resources", "Security", "Electrical & Boiler", "F.G.Stores (Hosiery)", "Finance","Premises Maintenance","Procurement & Logistics","Stores","Workshop","Dye House","Boarding","Cap Looping","Components","Cutting (Hosiery)","D.C. Knitting & Separating","D.C. Knitting (Hosiery)","Embroidery","FTK / KOEPER / RJM","Finishing Gloves","Gloves Looping","Grading","Hand Cutting","Hand Flat knitting","Handwork","Hosiery Application","LGT","Looping (Hosiery)","M Lock / Rubber Sewing","MCU/CMS","Machine Cutting","Matec","Outsourcing","Packing & Machine Stitch","Packing (Hosiery)","Production Office (Gloves)","Production Office (Hosiery)","Production Office (Sewing)","Sewing","Steaming","Toe Closing","WARP Knitting / Accessories","Weighing","Winding","Directors' Office","Merchandising","Pattern Making","Product Development","Sample","Sample (Hosiery)","IE","Quality Assurance","Information & Technology","Wages & Costing","Bungalow","Planning"];
 
   // --- Real-Time Data Fetching ---
   useEffect(() => {

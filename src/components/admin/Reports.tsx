@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Download, Mail, Calendar, Car, User as UserIcon, FileText, Filter } from 'lucide-react';
+import { Download, Mail, Calendar, Car, User as UserIcon, FileText, Filter, Edit, X, Check, Banknote } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
 // Firebase Imports
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 // PDF Imports
 import jsPDF from 'jspdf';
@@ -27,10 +27,13 @@ export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
     endDate: '',
   });
 
+  const [editingTripId, setEditingTripId] = useState<string | null>(null);
+  const [editCostValue, setEditCostValue] = useState('');
+
   useEffect(() => {
     const fetchReports = async () => {
       try {
-        const q = query(collection(db, "trip_requests")); // orderBy('createdAt', 'desc') can be added if index exists
+        const q = query(collection(db, "trip_requests")); 
         const querySnapshot = await getDocs(q);
         const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setReports(data);
@@ -43,12 +46,45 @@ export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
     fetchReports();
   }, []);
 
-  // PDF Generation
+  // Update Cost Function
+  const handleUpdateCost = async (id: string) => {
+    try {
+        const formattedCost = editCostValue.startsWith('LKR') ? editCostValue : `LKR ${editCostValue}`;
+        const tripRef = doc(db, "trip_requests", id);
+        await updateDoc(tripRef, { cost: formattedCost });
+        setReports(prev => prev.map(trip => trip.id === id ? { ...trip, cost: formattedCost } : trip));
+        setEditingTripId(null);
+        setEditCostValue('');
+        alert("Cost updated successfully!");
+    } catch (error) {
+        console.error("Error updating cost:", error);
+        alert("Failed to update cost.");
+    }
+  };
+
+  const startEditing = (trip: any) => {
+      const numericCost = (trip.cost || '').toString().replace(/[^0-9.]/g, '');
+      setEditCostValue(numericCost);
+      setEditingTripId(trip.id);
+  };
+
+  // --- PDF with Header & Footer ---
   const handleExportPDF = () => {
     const doc = new jsPDF();
-    doc.text("Transport Trip Report", 14, 15);
+    
+    const headerImg = '/report-header.jpg';
+    const footerImg = '/report-footer.png';
+
+    const addHeaderFooter = (data: any) => {
+        const pageHeight = doc.internal.pageSize.height;
+        try { doc.addImage(headerImg, 'JPG', 10, 5, 100, 20); } catch(e) {}
+        try { doc.addImage(footerImg, 'PNG', 10, pageHeight - 25, 190, 20); } catch(e) {}
+    };
+
+    doc.setFontSize(18);
+    doc.text("Transport Trip Report", 14, 40);
     doc.setFontSize(10);
-    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 22);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 47);
 
     const tableData = filteredData.map(trip => [
       trip.serialNumber || trip.id,
@@ -63,9 +99,11 @@ export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
     autoTable(doc, {
       head: [['Trip ID', 'Date', 'Vehicle', 'Driver', 'EPF', 'Distance', 'Cost']],
       body: tableData,
-      startY: 30,
+      startY: 55,
       theme: 'grid',
-      headStyles: { fillColor: [37, 99, 235] }, // Blue header
+      headStyles: { fillColor: [37, 99, 235] },
+      didDrawPage: addHeaderFooter,
+      margin: { top: 35, bottom: 30 }
     });
 
     doc.save(`transport-report-${new Date().toISOString().split('T')[0]}.pdf`);
@@ -85,8 +123,8 @@ export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
 
   const parseCost = (cost: any) => {
     if (!cost) return 0;
-    if (typeof cost === 'number') return cost;
-    return parseInt(cost.toString().replace(/[^0-9]/g, '') || '0');
+    const numeric = cost.toString().replace(/[^0-9.]/g, '');
+    return parseFloat(numeric) || 0;
   };
   const parseDistance = (dist: any) => {
     if (!dist) return 0;
@@ -133,7 +171,7 @@ export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
              <div><div className="text-2xl font-bold">{totalDistance.toFixed(1)} km</div><div className="text-sm text-gray-500">Total Distance</div></div>
           </Card>
           <Card className="p-6 flex items-center gap-4">
-             <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center"><FileText className="w-6 text-green-600" /></div>
+             <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center"><Banknote className="w-6 text-green-600" /></div>
              <div><div className="text-2xl font-bold">LKR {totalCost.toLocaleString()}</div><div className="text-sm text-gray-500">Total Cost</div></div>
           </Card>
         </div>
@@ -157,7 +195,7 @@ export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
                   <th className="px-6 py-4 text-left text-sm text-gray-700">Driver</th>
                   <th className="px-6 py-4 text-left text-sm text-gray-700">EPF</th>
                   <th className="px-6 py-4 text-left text-sm text-gray-700">Distance</th>
-                  <th className="px-6 py-4 text-left text-sm text-gray-700">Cost</th>
+                  <th className="px-6 py-4 text-left text-sm text-gray-700">Cost (LKR)</th>
                   <th className="px-6 py-4 text-left text-sm text-gray-700">Status</th>
                 </tr>
               </thead>
@@ -170,7 +208,29 @@ export function Reports({ user, onNavigate, onLogout }: ReportsProps) {
                     <td className="px-6 py-4 text-gray-600">{trip.driverName || '-'}</td>
                     <td className="px-6 py-4 text-gray-600">{trip.epfNumber || trip.epf || '-'}</td>
                     <td className="px-6 py-4 text-gray-600">{trip.distance || '-'}</td>
-                    <td className="px-6 py-4 font-medium text-green-600">{trip.cost || '-'}</td>
+                    
+                    {/* Cost Column with Inline Editing */}
+                    <td className="px-6 py-4 font-medium text-green-600">
+                      {editingTripId === trip.id ? (
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="number" 
+                            className="w-20 p-1 border rounded text-sm" 
+                            value={editCostValue} 
+                            onChange={(e) => setEditCostValue(e.target.value)}
+                            autoFocus
+                          />
+                          <button onClick={() => handleUpdateCost(trip.id)} className="p-1 bg-green-100 text-green-600 rounded hover:bg-green-200"><Check className="w-3 h-3"/></button>
+                          <button onClick={() => setEditingTripId(null)} className="p-1 bg-red-100 text-red-600 rounded hover:bg-red-200"><X className="w-3 h-3"/></button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 group cursor-pointer" onClick={() => startEditing(trip)} title="Click to edit cost">
+                          {trip.cost || '0'}
+                          <Edit className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100" />
+                        </div>
+                      )}
+                    </td>
+                    
                     <td className="px-6 py-4"><Badge status={trip.status} size="sm" /></td>
                   </tr>
                 ))}
