@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { MapPin, User as UserIcon, Phone, Navigation, Play, Square, CheckCircle } from 'lucide-react';
+import { MapPin, User as UserIcon, Phone, Navigation, Play, Square, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
@@ -13,6 +13,118 @@ interface DriverTripDetailProps {
   onNavigate: (screen: string) => void;
   onLogout: () => void;
 }
+
+// Helper Component for Collapsible Stops
+const DriverStopList = ({ destinations, finalDestination }: { destinations?: string[], finalDestination: string }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  // Legacy support: if no destinations array, just show single destination
+  if (!destinations || destinations.length === 0) {
+    return (
+       <div className="flex gap-4">
+          <div className="flex flex-col items-center">
+             <div className="w-3 h-3 bg-red-500 rounded-full"/>
+          </div>
+          <div>
+             <div className="text-xs text-gray-500 uppercase">Drop-off</div>
+             <div className="text-gray-900 font-medium">{finalDestination}</div>
+          </div>
+       </div>
+    );
+  }
+
+  // Combine intermediate stops + final destination for display list
+  // Assuming 'destinations' in DB might contain all stops including final
+  // or just intermediate. We'll treat the last one as final if needed.
+  // Based on BookVehicle logic: 'destinations' contains all stops.
+  
+  const allStops = [...destinations];
+
+  // If few stops, show all
+  if (allStops.length <= 3) {
+      return (
+        <>
+          {allStops.map((stop, i) => (
+             <div key={i} className="flex gap-4">
+                <div className="flex flex-col items-center">
+                   {/* If it's the last stop, make it Red, else Blue */}
+                   <div className={`w-3 h-3 rounded-full ${i === allStops.length - 1 ? 'bg-red-500' : 'bg-blue-500 border-2 border-white shadow-sm'}`}/>
+                   {i !== allStops.length - 1 && <div className="w-0.5 h-full bg-gray-200"/>}
+                </div>
+                <div>
+                   <div className="text-xs text-gray-500 uppercase">{i === allStops.length - 1 ? 'Drop-off' : `Stop ${i + 1}`}</div>
+                   <div className="text-gray-900">{stop}</div>
+                </div>
+             </div>
+          ))}
+        </>
+      );
+  }
+
+  // If many stops, collapse middle ones
+  return (
+    <>
+      {/* First Stop */}
+      <div className="flex gap-4">
+          <div className="flex flex-col items-center">
+              <div className="w-3 h-3 bg-blue-500 rounded-full border-2 border-white shadow-sm"/>
+              <div className="w-0.5 h-full bg-gray-200"/>
+          </div>
+          <div>
+              <div className="text-xs text-gray-500 uppercase">Stop 1</div>
+              <div className="text-gray-900">{allStops[0]}</div>
+          </div>
+      </div>
+
+      {/* Expanded Middle Stops */}
+      {expanded && allStops.slice(1, -1).map((stop, i) => (
+         <div key={i} className="flex gap-4">
+            <div className="flex flex-col items-center">
+               <div className="w-3 h-3 bg-blue-500 rounded-full border-2 border-white shadow-sm"/>
+               <div className="w-0.5 h-full bg-gray-200"/>
+            </div>
+            <div>
+               <div className="text-xs text-gray-500 uppercase">Stop {i + 2}</div>
+               <div className="text-gray-900">{stop}</div>
+            </div>
+         </div>
+      ))}
+
+      {/* Toggle Button */}
+      {!expanded && (
+        <div className="pl-7 my-2">
+           <button 
+             onClick={() => setExpanded(true)} 
+             className="text-sm text-blue-600 flex items-center gap-1 hover:underline"
+           >
+             <ChevronDown className="w-4 h-4" />
+             Show {allStops.length - 2} intermediate stops
+           </button>
+           <div className="ml-[5px] w-0.5 h-4 bg-gray-200 -mt-1 mb-1"></div>
+        </div>
+      )}
+
+      {/* Last Stop */}
+      <div className="flex gap-4">
+          <div className="flex flex-col items-center">
+              <div className="w-3 h-3 bg-red-500 rounded-full"/>
+          </div>
+          <div>
+              <div className="text-xs text-gray-500 uppercase">Drop-off</div>
+              <div className="text-gray-900 font-medium">{allStops[allStops.length - 1]}</div>
+          </div>
+      </div>
+
+      {expanded && (
+         <div className="pl-7 mt-2">
+           <button onClick={() => setExpanded(false)} className="text-sm text-gray-500 flex items-center gap-1 hover:underline">
+             <ChevronUp className="w-4 h-4" /> Show Less
+           </button>
+         </div>
+      )}
+    </>
+  );
+};
 
 export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverTripDetailProps) {
   const [trip, setTrip] = useState<any>(null);
@@ -32,7 +144,6 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
           const data = { id: docSnap.id, ...docSnap.data() };
           setTrip(data);
           
-          // If previously completed, show summary immediately
           if (data.status === 'completed') {
             setShowSummary(true);
           }
@@ -60,7 +171,6 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
         startedAt: new Date().toISOString()
       });
       
-      // Update local state immediately for UI responsiveness
       setTrip((prev: any) => ({ ...prev, status: 'in-progress' }));
       alert('Trip started! GPS tracking enabled.');
     } catch (error) {
@@ -78,10 +188,13 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
         endedAt: new Date().toISOString()
       });
 
-      // Mark vehicle as available again
       if (trip.vehicleId) {
         const vehicleRef = doc(db, "vehicles", trip.vehicleId);
         await updateDoc(vehicleRef, { status: 'available' });
+      }
+      if (user.id) {
+         const userRef = doc(db, "users", user.id);
+         await updateDoc(userRef, { status: 'available' });
       }
 
       setTrip((prev: any) => ({ ...prev, status: 'completed' }));
@@ -96,232 +209,88 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
     onNavigate('driver-dashboard');
   };
 
-  if (loading) {
-    return <div className="p-10 text-center">Loading Trip Details...</div>;
-  }
-
-  if (!trip) {
-    return <div className="p-10 text-center">Trip not found.</div>;
-  }
+  if (loading) return <div className="p-10 text-center">Loading...</div>;
+  if (!trip) return <div className="p-10 text-center">Trip not found</div>;
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
       <TopNav user={user} onNavigate={onNavigate} onLogout={onLogout} />
-      
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         <div className="mb-6">
-          <button
-            onClick={() => onNavigate('driver-dashboard')}
-            className="text-[#2563EB] hover:text-[#1E40AF] mb-4"
-          >
-            ← Back to Dashboard
-          </button>
-          <h1 className="text-3xl text-gray-900 mb-2">Trip Details</h1>
-          <p className="text-gray-600">Trip #{trip.id}</p>
+          <button onClick={() => onNavigate('driver-dashboard')} className="text-[#2563EB] mb-4">← Back</button>
+          <h1 className="text-3xl text-gray-900">Trip #{trip.serialNumber || trip.id}</h1>
         </div>
 
         {!showSummary ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Main Content */}
-            <div className="lg:col-span-2 space-y-6">
-              {/* Map */}
-              <Card className="p-6">
-                <h2 className="text-lg text-gray-900 mb-4">
-                  {trip.status === 'approved' && 'Route to Pickup Location'}
-                  {trip.status === 'in-progress' && 'Navigation to Destination'}
-                  {trip.status === 'completed' && 'Trip Completed'}
-                </h2>
-                
-                {/* Mock Map */}
-                <div className="w-full h-96 bg-gray-200 rounded-xl flex items-center justify-center mb-4 relative overflow-hidden">
-                  <div className="text-center z-10">
-                    <Navigation className="w-16 h-16 text-[#2563EB] mx-auto mb-3" />
-                    <p className="text-gray-500">Interactive Map Navigation</p>
-                    <p className="text-sm text-gray-400">
-                      {trip.status === 'approved' && 'Route to pickup location'}
-                      {trip.status === 'in-progress' && 'Live GPS tracking active'}
-                      {trip.status === 'completed' && 'Trip route completed'}
-                    </p>
-                  </div>
-                </div>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+               <div className="lg:col-span-2 space-y-6">
+                  {/* Route Details Card */}
+                  <Card className="p-6">
+                     <h2 className="text-lg font-bold mb-4">Route</h2>
+                     <div className="space-y-0">
+                        {/* Pickup */}
+                        <div className="flex gap-4">
+                           <div className="flex flex-col items-center">
+                              <div className="w-3 h-3 bg-green-500 rounded-full"/>
+                              <div className="w-0.5 h-full bg-gray-200"/>
+                           </div>
+                           <div>
+                              <div className="text-xs text-gray-500 uppercase">Pickup</div>
+                              <div className="text-gray-900 font-medium">{trip.pickup}</div>
+                           </div>
+                        </div>
 
-                {trip.status === 'in-progress' && (
-                  <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-                    <div className="flex items-center gap-2 text-green-700">
-                      <div className="w-2 h-2 bg-green-600 rounded-full animate-pulse"></div>
-                      <span>GPS Tracking Active</span>
-                    </div>
-                  </div>
-                )}
-              </Card>
+                        {/* Collapsible Stop List */}
+                        <DriverStopList destinations={trip.destinations} finalDestination={trip.destination} />
+                     </div>
+                  </Card>
 
-              {/* Route Details */}
-              <Card className="p-6">
-                <h2 className="text-lg text-gray-900 mb-4">Trip Information</h2>
-                
-                <div className="space-y-4">
-                  <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-                      <MapPin className="w-5 h-5 text-green-600" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="text-sm text-gray-500 mb-1">Pickup Location</div>
-                      <div className="text-gray-900">{trip.pickup}</div>
-                      {/* Fallback if lat/lng aren't in DB yet */}
-                      <div className="text-sm text-gray-500 mt-1">
-                        Lat: {trip.pickupLat || 'N/A'}, Lng: {trip.pickupLng || 'N/A'}
-                      </div>
-                    </div>
-                  </div>
+                  {/* Actions Card */}
+                  <Card className="p-6">
+                     <h2 className="text-lg font-bold mb-4">Actions</h2>
+                     {trip.status === 'approved' && (
+                        <button onClick={handleStartTrip} className="w-full py-4 bg-green-600 text-white rounded-xl flex justify-center gap-2 hover:bg-green-700 transition-all">
+                           <Play className="w-5 h-5" /> Start Trip
+                        </button>
+                     )}
+                     {trip.status === 'in-progress' && (
+                        <button onClick={handleEndTrip} className="w-full py-4 bg-red-600 text-white rounded-xl flex justify-center gap-2 hover:bg-red-700 transition-all">
+                           <Square className="w-5 h-5" /> End Trip
+                        </button>
+                     )}
+                     {trip.status === 'completed' && (
+                        <div className="w-full py-4 bg-gray-100 text-green-700 rounded-xl flex justify-center gap-2 font-bold">
+                           <CheckCircle className="w-5 h-5" /> Trip Completed
+                        </div>
+                     )}
+                  </Card>
+               </div>
 
-                  <div className="ml-5 border-l-2 border-dashed border-gray-300 h-8"></div>
-
-                  <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                      <MapPin className="w-5 h-5 text-[#2563EB]" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="text-sm text-gray-500 mb-1">Destination</div>
-                      <div className="text-gray-900">{trip.destination}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-gray-200">
-                  <div>
-                    <div className="text-sm text-gray-500 mb-1">Distance</div>
-                    <div className="text-gray-900">{trip.distance || 'Calculating...'}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-gray-500 mb-1">Est. Duration</div>
-                    <div className="text-gray-900">{trip.estimatedDuration || 'Calculating...'}</div>
-                  </div>
-                </div>
-              </Card>
+               {/* Customer Card */}
+               <div className="space-y-6">
+                  <Card className="p-6">
+                     <h2 className="text-lg font-bold mb-4">Customer</h2>
+                     <div className="flex items-center gap-3 mb-4">
+                        <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center"><UserIcon className="w-6 h-6 text-gray-500"/></div>
+                        <div>
+                           <div className="font-bold">{trip.customer || trip.customerName}</div>
+                           <div className="text-sm text-gray-500">{trip.epf || trip.epfNumber}</div>
+                        </div>
+                     </div>
+                     <a href={`tel:${trip.customerPhone || trip.phone}`} className="flex items-center justify-center gap-2 w-full py-3 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-all">
+                        <Phone className="w-4 h-4"/> Call Customer
+                     </a>
+                  </Card>
+               </div>
             </div>
-
-            {/* Sidebar */}
-            <div className="space-y-6">
-              {/* Customer Info */}
-              <Card className="p-6">
-                <h2 className="text-lg text-gray-900 mb-4">Customer Details</h2>
-                
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <UserIcon className="w-5 h-5 text-gray-400" />
-                    <div>
-                      <div className="text-sm text-gray-500">Name</div>
-                      <div className="text-gray-900">{trip.customer || trip.customerName}</div>
-                      <div className="text-sm text-gray-600">{trip.epf || trip.epfNumber}</div>
-                    </div>
-                  </div>
-
-                  <a
-                    href={`tel:${trip.customerPhone || trip.phone}`}
-                    className="flex items-center gap-3 p-3 bg-green-50 rounded-xl hover:bg-green-100 transition-all"
-                  >
-                    <Phone className="w-5 h-5 text-green-600" />
-                    <div>
-                      <div className="text-sm text-gray-500">Call Customer</div>
-                      <div className="text-green-700">{trip.customerPhone || trip.phone || 'N/A'}</div>
-                    </div>
-                  </a>
-                </div>
-              </Card>
-
-              {/* Trip Controls */}
-              <Card className="p-6">
-                <h2 className="text-lg text-gray-900 mb-4">Trip Controls</h2>
-                
-                <div className="space-y-3">
-                  {(trip.status === 'approved' || trip.status === 'pending') && (
-                    <button
-                      onClick={handleStartTrip}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-4 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-all"
-                    >
-                      <Play className="w-5 h-5" />
-                      Start Trip
-                    </button>
-                  )}
-
-                  {trip.status === 'in-progress' && (
-                    <button
-                      onClick={handleEndTrip}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-4 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all"
-                    >
-                      <Square className="w-5 h-5" />
-                      End Trip
-                    </button>
-                  )}
-
-                  {trip.status === 'completed' && (
-                    <div className="flex items-center justify-center gap-2 px-4 py-4 bg-gray-100 text-gray-700 rounded-xl">
-                      <CheckCircle className="w-5 h-5 text-green-600" />
-                      Trip Completed
-                    </div>
-                  )}
-                </div>
-
-                {trip.status === 'approved' && (
-                  <p className="text-sm text-gray-500 mt-3 text-center">
-                    GPS tracking will start when you begin the trip
-                  </p>
-                )}
-
-                {trip.status === 'in-progress' && (
-                  <p className="text-sm text-green-600 mt-3 text-center">
-                    Your location is being tracked
-                  </p>
-                )}
-              </Card>
-            </div>
-          </div>
         ) : (
-          /* Trip Summary */
-          <Card className="p-8 max-w-2xl mx-auto">
-            <div className="text-center mb-8">
-              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <CheckCircle className="w-10 h-10 text-green-600" />
-              </div>
-              <h2 className="text-2xl text-gray-900 mb-2">Trip Completed!</h2>
-              <p className="text-gray-600">Summary of your trip</p>
-            </div>
-
-            <div className="space-y-4 mb-8">
-              <div className="p-4 bg-gray-50 rounded-xl">
-                <div className="text-sm text-gray-500 mb-1">Trip ID</div>
-                <div className="text-gray-900">{trip.id}</div>
-              </div>
-
-              <div className="p-4 bg-gray-50 rounded-xl">
-                <div className="text-sm text-gray-500 mb-1">Customer</div>
-                <div className="text-gray-900">{trip.customer || trip.customerName}</div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-gray-50 rounded-xl">
-                  <div className="text-sm text-gray-500 mb-1">Distance</div>
-                  <div className="text-gray-900">{trip.distance || 'N/A'}</div>
+            <Card className="p-8 max-w-2xl mx-auto text-center">
+                <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                   <CheckCircle className="w-10 h-10 text-green-600" />
                 </div>
-                <div className="p-4 bg-gray-50 rounded-xl">
-                  <div className="text-sm text-gray-500 mb-1">Duration</div>
-                  <div className="text-gray-900">{trip.estimatedDuration || 'N/A'}</div>
-                </div>
-              </div>
-
-              <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-                <div className="text-sm text-gray-500 mb-1">Status</div>
-                <div className="text-green-700">Successfully Completed</div>
-              </div>
-            </div>
-
-            <button
-              onClick={handleCompleteSummary}
-              className="w-full py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all"
-            >
-              Return to Dashboard
-            </button>
-          </Card>
+                <h2 className="text-2xl font-bold mb-2">Trip Completed</h2>
+                <button onClick={handleCompleteSummary} className="mt-6 w-full py-3 bg-[#2563EB] text-white rounded-xl">Back to Dashboard</button>
+            </Card>
         )}
       </div>
     </div>

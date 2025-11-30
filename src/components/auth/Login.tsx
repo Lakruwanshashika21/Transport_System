@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Mail, Lock, Car, Eye, EyeOff, AlertTriangle } from 'lucide-react';
-import { User } from '../../App';
+import { Mail, Lock, Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { User } from '../../types'; // Ensure this path is correct based on your folder structure
 // Firebase Imports
 import { signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../../firebase';
+import { sendLoginNotification } from '../../utils/emailService';
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -31,17 +32,17 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
         if (userDoc.exists()) {
           const userData = userDoc.data();
           
-          // Security Check: Ensure role matches selected tab
+          // Security Check
           if (userData.role !== loginType) {
-              throw new Error(`Access Denied: This email is registered as '${userData.role}', but you are trying to login as '${loginType}'. Please switch the tab above.`);
+              throw new Error(`Access Denied: You are a ${userData.role}, but trying to login as ${loginType}.`);
           }
 
-          // Driver Approval Checks
+          // Driver Checks
           if (loginType === 'driver' && userData.driverStatus === 'pending') {
-              throw new Error('Your driver account is pending approval by an admin.');
+              throw new Error('Your driver account is pending approval.');
           }
           if (loginType === 'driver' && userData.driverStatus === 'rejected') {
-              throw new Error('Your driver account application was rejected.');
+              throw new Error('Your driver account was rejected.');
           }
 
           return {
@@ -53,13 +54,11 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
               ...userData
           } as User;
         } else {
-          throw new Error('User profile not found in database. Please register again.');
+          throw new Error('Profile not found. Please Register.');
         }
     } catch (err: any) {
-        // Retry logic for genuine network blips
         if (retries > 0 && (err.message?.includes("offline") || err.code === 'unavailable')) {
-            console.warn(`Connection failed. Retrying... (${retries} attempts left)`);
-            await delay(500); 
+            await delay(1000); 
             return fetchUserDetailsWithRetry(uid, retries - 1);
         }
         throw err;
@@ -72,24 +71,20 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
     setLoading(true);
 
     try {
-      // 1. Authenticate with Firebase
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      
-      // 2. Fetch Extra Data & Verify Role (With Retry)
       const appUser = await fetchUserDetailsWithRetry(userCredential.user.uid);
+      
+      // Send Email Notification
+      console.log("Sending login email to:", appUser.email); // Debug log
+      await sendLoginNotification(appUser.email, appUser.name);
+      
       onLogin(appUser);
 
     } catch (err: any) {
       console.error("Login Error:", err);
-      if (err.code === 'auth/invalid-credential') {
-        setError('Invalid email or password.');
-      } else if (err.code === 'auth/too-many-requests') {
-        setError('Too many failed attempts. Please wait 5 minutes.');
-      } else if (err.code === 'auth/network-request-failed') {
-        setError('Network error. Please check your internet connection.');
-      } else {
-        setError(err.message || 'Login failed.');
-      }
+      if (err.code === 'auth/invalid-credential') setError('Invalid email or password.');
+      else if (err.code === 'auth/too-many-requests') setError('Too many failed attempts. Wait 5 mins.');
+      else setError(err.message || 'Login failed.');
     } finally {
       setLoading(false);
     }
@@ -102,16 +97,14 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const appUser = await fetchUserDetailsWithRetry(result.user.uid);
+      
+      console.log("Sending Google login email to:", appUser.email); // Debug log
+      await sendLoginNotification(appUser.email, appUser.name);
+      
       onLogin(appUser);
     } catch (err: any) {
-      console.error(err);
-      if (err.code === 'auth/popup-closed-by-user') {
-        setError('Sign-in cancelled.');
-      } else if (err.code === 'auth/network-request-failed') {
-        setError('Network error. Please check your connection.');
-      } else {
-        setError(err.message || 'Google sign-in failed.');
-      }
+      if (err.code === 'auth/popup-closed-by-user') setError('Sign-in cancelled.');
+      else setError(err.message || 'Google sign-in failed.');
     } finally {
       setLoading(false);
     }
@@ -123,21 +116,20 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
       <div className="bg-white border-b border-gray-200 py-6 px-4 sm:px-6">
         <div className="max-w-md mx-auto flex flex-col items-center justify-center gap-3 text-center">
           
-          {/* REPLACED CAR ICON WITH IMAGE */}
+          {/* LOGO IMAGE */}
           <img 
             src="/report-header.jpg" 
-            alt="Transport System Logo" 
-            className="h-20 w-auto object-contain"
+            alt="Transport System" 
+            className="h-16 w-auto object-contain" 
             onError={(e) => {
-              // Fallback if image is missing
-              e.currentTarget.style.display = 'none';
+                console.warn("Logo image failed to load"); // Debug log
+                e.currentTarget.style.display = 'none';
             }}
           />
 
-          {/* Fallback Text if needed (Optional) */}
           <div className="mt-2">
-            <div className="text-xl font-semibold text-gray-1000">Transport System</div>
-            <div className="text-xs text-gray-500">Carlos Embellishers, Dambuwa estate, Dadagamuwa, Veyangoda.</div>
+            <div className="text-xl font-semibold text-gray-900">Transport System</div>
+            <div className="text-xs text-gray-500">Carlos Embellishers / Eskimo Fashion Knitwear</div>
           </div>
         </div>
       </div>
@@ -148,10 +140,9 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
           <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 sm:p-8">
             <div className="mb-6">
               <h1 className="text-2xl text-gray-900 mb-2">Welcome Back</h1>
-              <p className="text-gray-600">Sign in to continue to your account</p>
+              <p className="text-gray-600">Sign in to continue</p>
             </div>
 
-            {/* Error Message */}
             {error && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg flex items-start gap-2">
                 <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
@@ -166,10 +157,10 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
                   key={role}
                   type="button"
                   onClick={() => setLoginType(role as any)}
-                  className={`flex-1 py-2.5 rounded-xl capitalize transition-all ${
+                  className={`flex-1 py-2.5 rounded-xl capitalize transition-all font-medium ${
                     loginType === role
-                      ? 'bg-[#2563EB] text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      ? 'bg-[#2563EB] text-white shadow-md'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
                   {role}
@@ -177,14 +168,13 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
               ))}
             </div>
 
-            {/* Google Sign-in */}
             <button
               type="button"
               onClick={handleGoogleLogin}
               disabled={loading}
               className="w-full flex items-center justify-center gap-3 px-4 py-3 border-2 border-gray-300 rounded-xl hover:bg-gray-50 transition-all mb-6 disabled:opacity-50"
             >
-              <span className="text-gray-700">Continue with Google</span>
+              <span className="text-gray-700 font-medium">Continue with Google</span>
             </button>
 
             <div className="relative mb-6">
@@ -192,33 +182,32 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
               <div className="relative flex justify-center text-sm"><span className="px-4 bg-white text-gray-500">Or sign in with email</span></div>
             </div>
 
-            {/* Login Form */}
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-700 mb-2">Email Address</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                 <div className="relative">
                   <input
                     type="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder={loginType === 'user' ? "user@example.com" : "you@example.com"}
-                    className="w-full px-4 py-3 pl-11 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
+                    className="w-full px-4 py-3 pl-11 border border-gray-300 rounded-xl"
+                    placeholder="email@example.com"
                   />
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-gray-700 mb-2">Password</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-4 py-3 pl-11 pr-11 border border-gray-300 rounded-xl"
                     placeholder="••••••••"
-                    className="w-full px-4 py-3 pl-11 pr-11 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:border-transparent"
                   />
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                   <button
@@ -231,41 +220,20 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" className="w-4 h-4 text-[#2563EB] border-gray-300 rounded focus:ring-[#2563EB]" />
-                  <span className="text-sm text-gray-700">Remember me</span>
-                </label>
-                <button type="button" className="text-sm text-[#2563EB] hover:text-[#1E40AF]">
-                  Forgot Password?
-                </button>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all disabled:opacity-50"
-              >
+              <button type="submit" disabled={loading} className="w-full py-3 bg-[#2563EB] text-white font-medium rounded-xl hover:bg-[#1E40AF] disabled:opacity-70">
                 {loading ? 'Signing in...' : 'Sign In'}
               </button>
             </form>
 
-            {/* Dynamic Registration Links */}
             <div className="mt-6 pt-6 border-t border-gray-200">
               {loginType === 'admin' ? (
-                 <div className="flex flex-col gap-2">
-                  <p className="text-center text-sm text-gray-600">Admin Access Only</p>
-                  <button
-                    onClick={() => onNavigate('admin-registration')}
-                    className="w-full py-2 text-sm text-[#2563EB] border border-[#2563EB] rounded-xl hover:bg-[#2563EB] hover:text-white transition-all"
-                  >
+                  <button onClick={() => onNavigate('admin-registration')} className="w-full py-2 text-sm text-[#2563EB] border border-[#2563EB] rounded-xl hover:bg-[#2563EB] hover:text-white transition-all">
                     Register New Admin
                   </button>
-                 </div>
               ) : (
-                 <p className="text-center text-sm text-gray-500">
-                   User registration is disabled. Please contact an Administrator to create your account.
-                 </p>
+                  <p className="text-center text-sm text-gray-500">
+                    Don't have an account? Contact Admin.
+                  </p>
               )}
             </div>
           </div>
