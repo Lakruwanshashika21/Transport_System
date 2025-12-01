@@ -35,7 +35,7 @@ export function Footer() {
 
           {/* CENTER: Corporate Websites (Professional Look) */}
           <div className="flex flex-col items-center justify-center gap-3">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Corporate Gateways</span>
+
             <div className="flex items-center gap-6">
                 <a 
                   href="https://www.carlosholdings.com/" 
