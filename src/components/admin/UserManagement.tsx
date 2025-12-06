@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
-import { Search, User as UserIcon, Mail, Phone, IdCard, Plus, Briefcase, Trash2, Key, AlertTriangle } from 'lucide-react';
+import { Search, User as UserIcon, Mail, Phone, IdCard, Plus, Briefcase, Trash2, Key, AlertTriangle, ArrowLeft } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 // Firebase Imports
-import { collection, query, where, setDoc, doc, deleteDoc, onSnapshot } from 'firebase/firestore'; // Added onSnapshot
+import { collection, query, where, setDoc, doc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { initializeApp, deleteApp, getApp, getApps } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { db, firebaseConfig, auth as mainAuth } from '../../firebase';
-// Email Service (Assumed you will add this function to emailService.ts)
-import emailjs from '@emailjs/browser'; 
+// Email & Logging
+import emailjs from '@emailjs/browser';
+import { logAction } from '../../utils/auditLogger'; // 1. Import Logger
 
 interface UserManagementProps {
   user: User;
@@ -39,7 +40,6 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
       const usersList = userSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
       // 2. Listen to Trips (Nested Listener for Stats)
-      // Note: For scalability, keep stats separate, but this works for real-time updates now
       const unsubscribeTrips = onSnapshot(collection(db, "trip_requests"), (tripSnap) => {
         const allTrips = tripSnap.docs.map(doc => doc.data());
 
@@ -72,6 +72,7 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
     }
     let secondaryApp;
     try {
+      // Use secondary app to create user without logging out admin
       if (getApps().some(app => app.name === "Secondary")) {
         const existingApp = getApp("Secondary");
         await deleteApp(existingApp);
@@ -92,8 +93,17 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
         createdAt: new Date().toISOString()
       });
 
-      // Send Welcome Email
-      // Replace SERVICE_ID and TEMPLATE_ID with your actual EmailJS IDs
+      // 📝 2. Log Action (Creation)
+      await logAction({
+        adminName: user.name || user.email,
+        adminEmail: user.email,
+        section: 'User Management',
+        action: 'User Created',
+        details: `Created user account: ${newUser.name} (${newUser.email}) - ${newUser.department}`,
+        targetId: uid
+      });
+
+      // Send Welcome Email via EmailJS
       emailjs.send("service_transport_app", "template_login_alert", {
         to_email: newUser.email,
         to_name: newUser.name,
@@ -118,6 +128,17 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
     if (!window.confirm(`Are you sure you want to remove ${selectedUser.name}?`)) return;
     try {
       await deleteDoc(doc(db, "users", selectedUser.id));
+
+      // 📝 3. Log Action (Deletion)
+      await logAction({
+        adminName: user.name || user.email,
+        adminEmail: user.email,
+        section: 'User Management',
+        action: 'User Deleted',
+        details: `Deleted user account: ${selectedUser.name} (${selectedUser.email})`,
+        targetId: selectedUser.id
+      });
+
       alert("User removed.");
       setSelectedUser(null);
     } catch (error) {
@@ -128,6 +149,7 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
   // --- Reset Password ---
   const handleResetPassword = async () => {
     if (!selectedUser?.email) return;
+    if (!window.confirm(`Send password reset email to ${selectedUser.email}?`)) return;
     try {
       await sendPasswordResetEmail(mainAuth, selectedUser.email);
       alert(`Reset email sent to ${selectedUser.email}`);
@@ -145,7 +167,7 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
     return true;
   });
 
-  if (loading) return <div className="p-10 text-center">Loading Users...</div>;
+  if (loading) return <div className="p-10 text-center text-gray-500">Loading Users...</div>;
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -154,10 +176,13 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         <div className="flex items-center justify-between mb-8">
           <div>
+            <button onClick={() => onNavigate('admin-dashboard')} className="mb-2 text-gray-500 hover:text-gray-900 flex items-center gap-1 transition-colors">
+                 <ArrowLeft size={18}/> Back to Dashboard
+            </button>
             <h1 className="text-3xl text-gray-900 mb-2">User Management</h1>
-            <p className="text-gray-600">Search and manage user accounts</p>
+            <p className="text-gray-600">Search and manage employee accounts</p>
           </div>
-          <button onClick={() => setShowAddModal(true)} className="flex items-center gap-2 px-6 py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all">
+          <button onClick={() => setShowAddModal(true)} className="flex items-center gap-2 px-6 py-3 bg-[#2563EB] text-white rounded-xl hover:bg-[#1E40AF] transition-all shadow-sm">
             <Plus className="w-5 h-5" /> Register User
           </button>
         </div>
@@ -165,7 +190,7 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
         <Card className="p-6 mb-8">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="md:col-span-1">
-              <select value={searchType} onChange={(e) => setSearchType(e.target.value as any)} className="w-full px-4 py-3 border border-gray-300 rounded-xl">
+              <select value={searchType} onChange={(e) => setSearchType(e.target.value as any)} className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none">
                 <option value="epf">EPF Number</option>
                 <option value="name">Name</option>
                 <option value="email">Email</option>
@@ -173,7 +198,7 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
             </div>
             <div className="md:col-span-3">
               <div className="relative">
-                <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder={`Search...`} className="w-full px-4 py-3 pl-11 border border-gray-300 rounded-xl" />
+                <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder={`Search...`} className="w-full px-4 py-3 pl-11 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
               </div>
             </div>
@@ -182,18 +207,19 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
+            {filteredUsers.length === 0 && <div className="text-center p-10 text-gray-500 bg-white rounded-xl border border-gray-200">No users found matching your search.</div>}
             {filteredUsers.map((u) => (
-              <Card key={u.id} onClick={() => setSelectedUser(u)} className={`p-6 cursor-pointer transition-all ${selectedUser?.id === u.id ? 'ring-2 ring-[#2563EB]' : ''}`}>
+              <Card key={u.id} onClick={() => setSelectedUser(u)} className={`p-6 cursor-pointer transition-all hover:shadow-md border-0 ring-1 ring-gray-100 ${selectedUser?.id === u.id ? 'ring-2 ring-[#2563EB] bg-blue-50/50' : ''}`}>
                 <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0">
-                    <UserIcon className="w-6 h-6 text-gray-600" />
+                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 text-blue-600 font-bold text-lg">
+                    {(u.name || u.fullName || 'U').charAt(0).toUpperCase()}
                   </div>
                   <div className="flex-1">
-                    <div className="text-lg text-gray-900 mb-1">{u.name}</div>
+                    <div className="text-lg font-semibold text-gray-900 mb-1">{u.name}</div>
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2 text-sm text-gray-600"><IdCard className="w-4 h-4 text-gray-400" />{u.epfNumber || 'No EPF'}</div>
+                      <div className="flex items-center gap-2 text-sm text-gray-600"><IdCard className="w-4 h-4 text-gray-400" /> <span className="font-mono bg-gray-100 px-1 rounded text-xs">{u.epfNumber || 'No EPF'}</span></div>
                       <div className="flex items-center gap-2 text-sm text-gray-600"><Mail className="w-4 h-4 text-gray-400" />{u.email}</div>
-                      <div className="flex items-center gap-2 text-sm text-gray-600"><Briefcase className="w-4 h-4 text-gray-400" />Dept: {u.department || 'N/A'}</div>
+                      <div className="flex items-center gap-2 text-sm text-gray-600"><Briefcase className="w-4 h-4 text-gray-400" />{u.department || 'Unassigned'}</div>
                     </div>
                   </div>
                 </div>
@@ -203,32 +229,35 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
 
           <div className="lg:col-span-1">
             {selectedUser ? (
-              <Card className="p-6 sticky top-24">
-                <h2 className="text-lg text-gray-900 mb-6">User Profile</h2>
+              <Card className="p-6 sticky top-24 border-0 shadow-lg ring-1 ring-gray-200">
                 <div className="text-center mb-6">
-                  <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3"><UserIcon className="w-10 h-10" /></div>
-                  <div className="text-xl text-gray-900">{selectedUser.name}</div>
-                  <div className="text-sm text-gray-500">Department: {selectedUser.department || 'None'}</div>
+                  <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner">
+                      <UserIcon className="w-10 h-10 text-gray-400" />
+                  </div>
+                  <div className="text-xl font-bold text-gray-900">{selectedUser.name}</div>
+                  <div className="text-sm text-gray-500 mt-1">{selectedUser.department || 'No Dept'}</div>
                 </div>
-                <div className="space-y-4 mb-8">
-                  <div className="p-4 bg-gray-50 rounded-xl"><div className="text-xs text-gray-500">EPF</div><div>{selectedUser.epfNumber}</div></div>
-                  <div className="p-4 bg-gray-50 rounded-xl"><div className="text-xs text-gray-500">Email</div><div>{selectedUser.email}</div></div>
-                  <div className="p-4 bg-gray-50 rounded-xl"><div className="text-xs text-gray-500">Phone</div><div>{selectedUser.phone}</div></div>
+                
+                <div className="space-y-3 mb-8">
+                  <div className="flex justify-between p-3 bg-gray-50 rounded-lg text-sm"><span className="text-gray-500">EPF Number</span><span className="font-medium">{selectedUser.epfNumber}</span></div>
+                  <div className="flex justify-between p-3 bg-gray-50 rounded-lg text-sm"><span className="text-gray-500">Phone</span><span className="font-medium">{selectedUser.phone || 'N/A'}</span></div>
+                  <div className="flex justify-between p-3 bg-gray-50 rounded-lg text-sm"><span className="text-gray-500">Total Trips</span><span className="font-medium text-blue-600">{selectedUser.totalTrips}</span></div>
+                  <div className="flex justify-between p-3 bg-gray-50 rounded-lg text-sm"><span className="text-gray-500">Joined</span><span className="font-medium">{selectedUser.joinDate}</span></div>
                 </div>
 
-                <div className="space-y-3">
-                  <button onClick={handleResetPassword} className="w-full flex items-center justify-center gap-2 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all">
+                <div className="space-y-3 pt-4 border-t border-gray-100">
+                  <button onClick={handleResetPassword} className="w-full flex items-center justify-center gap-2 py-2.5 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all font-medium">
                     <Key className="w-4 h-4" /> Send Password Reset
                   </button>
-                  <button onClick={handleDeleteUser} className="w-full flex items-center justify-center gap-2 py-3 bg-red-50 text-red-600 border border-red-200 rounded-xl hover:bg-red-100 transition-all">
-                    <Trash2 className="w-4 h-4" /> Remove User
+                  <button onClick={handleDeleteUser} className="w-full flex items-center justify-center gap-2 py-2.5 bg-red-50 text-red-600 border border-red-100 rounded-xl hover:bg-red-100 transition-all font-medium">
+                    <Trash2 className="w-4 h-4" /> Remove User Account
                   </button>
                 </div>
               </Card>
             ) : (
-              <Card className="p-12 text-center">
+              <Card className="p-12 text-center border-dashed border-2 border-gray-200 bg-gray-50">
                 <UserIcon className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500">Select a user to view actions</p>
+                <p className="text-gray-500 font-medium">Select a user to view details</p>
               </Card>
             )}
           </div>
@@ -237,23 +266,23 @@ export function UserManagement({ user, onNavigate, onLogout }: UserManagementPro
 
       {/* Add User Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in zoom-in duration-200">
           <Card className="w-full max-w-md p-6">
-            <h3 className="text-xl text-gray-900 mb-6">Register New User</h3>
+            <h3 className="text-xl font-bold text-gray-900 mb-6">Register New User</h3>
             <div className="space-y-4 mb-6">
-              <input type="text" placeholder="Full Name" className="w-full p-3 border rounded-xl" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} />
-              <input type="email" placeholder="Email" className="w-full p-3 border rounded-xl" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} />
-              <select className="w-full p-3 border rounded-xl bg-white" value={newUser.department} onChange={e => setNewUser({...newUser, department: e.target.value})}>
+              <input type="text" placeholder="Full Name" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} />
+              <input type="email" placeholder="Email" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} />
+              <select className="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none" value={newUser.department} onChange={e => setNewUser({...newUser, department: e.target.value})}>
                 <option value="">Select Department</option>
                 {departments.map((dept, index) => (<option key={index} value={dept}>{dept}</option>))}
               </select>
-              <input type="text" placeholder="EPF Number" className="w-full p-3 border rounded-xl" value={newUser.epfNumber} onChange={e => setNewUser({...newUser, epfNumber: e.target.value})} />
-              <input type="tel" placeholder="Phone" className="w-full p-3 border rounded-xl" value={newUser.phone} onChange={e => setNewUser({...newUser, phone: e.target.value})} />
-              <input type="password" placeholder="Password" className="w-full p-3 border rounded-xl" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} />
+              <input type="text" placeholder="EPF Number" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" value={newUser.epfNumber} onChange={e => setNewUser({...newUser, epfNumber: e.target.value})} />
+              <input type="tel" placeholder="Phone" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" value={newUser.phone} onChange={e => setNewUser({...newUser, phone: e.target.value})} />
+              <input type="password" placeholder="Password" className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} />
             </div>
             <div className="flex gap-3">
-              <button onClick={() => setShowAddModal(false)} className="flex-1 py-3 border rounded-xl">Cancel</button>
-              <button onClick={handleAddUser} className="flex-1 py-3 bg-[#2563EB] text-white rounded-xl">Create Account</button>
+              <button onClick={() => setShowAddModal(false)} className="flex-1 py-3 border rounded-xl font-medium hover:bg-gray-50">Cancel</button>
+              <button onClick={handleAddUser} className="flex-1 py-3 bg-[#2563EB] text-white rounded-xl font-medium hover:bg-blue-700 shadow-sm">Create Account</button>
             </div>
           </Card>
         </div>

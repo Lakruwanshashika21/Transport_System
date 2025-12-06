@@ -1,13 +1,15 @@
-import { useState, useEffect } from 'react';
-import { Mail, Lock, Eye, EyeOff, AlertTriangle } from 'lucide-react';
-import { User } from '../../types'; 
+import { useState } from 'react';
+import { Mail, Lock, Eye, EyeOff, AlertTriangle, Phone } from 'lucide-react';
+import { User } from '../../App'; 
 
+// ==================================================================================
+// ✅ REAL IMPORTS ENABLED
+// ==================================================================================
 
 import { signInWithEmailAndPassword, signInWithPopup, signOut } from 'firebase/auth'; 
-import { doc, getDoc, setDoc } from 'firebase/firestore'; // Added setDoc
+import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore'; 
 import { auth, db, googleProvider } from '../../firebase';
-import { sendLoginNotification } from '../../utils/emailService';
-
+// import { sendLoginNotification } from '../../utils/emailService'; // Uncomment if/when ready
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -16,25 +18,26 @@ interface LoginProps {
 
 export function Login({ onLogin, onNavigate }: LoginProps) {
   const [loginType, setLoginType] = useState<'user' | 'driver' | 'admin'>('user');
+  
+  // Form State
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState(''); 
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // --- Helper to wait (for retries) ---
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // --- 🔄 SELF-HEALING: Restore Deleted Account ---
-  // If Auth exists but DB is gone, re-create the DB record automatically.
+  // --- Helper: Restore Deleted Account (Self-Healing) ---
   const restoreUserAccount = async (uid: string, email: string | null, role: string) => {
     try {
       await setDoc(doc(db, "users", uid), {
         uid,
         email: email || "",
         role,
-        status: 'active', // Default to active if restoring
+        status: 'active',
         createdAt: new Date().toISOString(),
         restoredAt: new Date().toISOString()
       });
@@ -45,7 +48,7 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
     }
   };
 
-  // --- Helper to fetch user details safely with Retry ---
+  // --- Helper: Fetch User Details & Security Checks ---
   const fetchUserDetailsWithRetry = async (uid: string, email: string | null, retries = 3): Promise<User> => {
     try {
         const userDoc = await getDoc(doc(db, "users", uid));
@@ -53,45 +56,36 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
         if (userDoc.exists()) {
           const userData = userDoc.data();
           
-          // 🛑 SECURITY CHECK: BAN STATUS
+          // 1. BAN CHECK
           if (userData.status === 'banned') {
               await signOut(auth); 
               throw new Error("ACCESS DENIED: Your account has been banned by the administrator.");
           }
 
-          // Security Check: Role Mismatch
-          if (userData.role !== loginType) {
-              await signOut(auth);
-              throw new Error(`Access Denied: You are a ${userData.role}, but trying to login as ${loginType}.`);
-          }
-
-          // Driver Checks
-          if (loginType === 'driver' && userData.driverStatus === 'pending') {
-              await signOut(auth);
-              throw new Error('Your driver account is pending approval.');
-          }
-          if (loginType === 'driver' && userData.driverStatus === 'rejected') {
-              await signOut(auth);
-              throw new Error('Your driver account was rejected.');
+          // 2. ROLE CHECK REMOVED
+          // We now allow cross-role login (e.g. Driver logging in via Email on User tab)
+          // The App.tsx will handle routing based on the returned role.
+          
+          // 3. DRIVER STATUS CHECK (Only if the account is actually a driver)
+          if (userData.role === 'driver') {
+             if (userData.driverStatus === 'pending') { await signOut(auth); throw new Error('Your driver account is pending approval.'); }
+             if (userData.driverStatus === 'rejected') { await signOut(auth); throw new Error('Your driver account was rejected.'); }
           }
 
           return {
               id: uid,
-              name: userData.fullName || userData.email,
+              name: userData.name || userData.fullName || userData.email,
               email: userData.email,
               role: userData.role,
               phone: userData.phone,
               ...userData
           } as User;
         } else {
-          // ⚠️ PROFILE MISSING BUT AUTH SUCCESS
-          // This happens when you delete the user from DB but not Auth.
-          // We will attempt to RESTORE the account here.
+          // 4. MISSING PROFILE -> ATTEMPT RESTORE
           console.log("Profile missing. Attempting auto-restore...");
           const restored = await restoreUserAccount(uid, email, loginType);
           
           if (restored) {
-             // If restore worked, recursively try fetching again immediately
              return fetchUserDetailsWithRetry(uid, email, retries); 
           }
 
@@ -99,7 +93,6 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
           throw new Error('Profile not found and could not be restored.');
         }
     } catch (err: any) {
-        // Retry logic for network issues only
         if (retries > 0 && (err.message?.includes("offline") || err.code === 'unavailable')) {
             await delay(1000); 
             return fetchUserDetailsWithRetry(uid, email, retries - 1);
@@ -108,35 +101,35 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
     }
   };
 
-  // 🛑 AUTOMATIC BAN CHECK ON MOUNT
-  useEffect(() => {
-    const checkCurrentStatus = async () => {
-        if (auth.currentUser) {
-            try {
-                await fetchUserDetailsWithRetry(auth.currentUser.uid, auth.currentUser.email);
-            } catch (err: any) {
-                console.log("Auto-login validation failed:", err.message);
-                if (err.message.includes("ACCESS DENIED")) {
-                    setError(err.message);
-                }
-            }
-        }
-    };
-    checkCurrentStatus();
-  }, []);
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      // Pass Email to fetch function for potential restoration
+      let targetEmail = email;
+
+      // 🟢 PHONE NUMBER LOOKUP FOR DRIVERS
+      if (loginType === 'driver') {
+          if (!phone) { throw new Error("Please enter your phone number."); }
+          
+          // Lookup Email using Phone Number
+          const q = query(collection(db, "users"), where("phone", "==", phone), where("role", "==", "driver"));
+          const querySnapshot = await getDocs(q);
+
+          if (querySnapshot.empty) {
+              throw new Error("No driver account found with this phone number.");
+          }
+
+          // Get the first matching user's email
+          targetEmail = querySnapshot.docs[0].data().email;
+      }
+
+      // Authenticate
+      const userCredential = await signInWithEmailAndPassword(auth, targetEmail, password);
       const appUser = await fetchUserDetailsWithRetry(userCredential.user.uid, userCredential.user.email);
       
-      console.log("Sending login email to:", appUser.email); 
-      await sendLoginNotification(appUser.email, appUser.name);
+      // await sendLoginNotification(appUser.email, appUser.name); 
       
       onLogin(appUser);
 
@@ -144,8 +137,9 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
       console.error("Login Error:", err);
       if (auth.currentUser) await signOut(auth);
 
-      if (err.code === 'auth/invalid-credential') setError('Invalid email or password.');
+      if (err.code === 'auth/invalid-credential') setError('Invalid credentials.');
       else if (err.code === 'auth/too-many-requests') setError('Too many failed attempts. Wait 5 mins.');
+      else if (err.code === 'permission-denied') setError('System Error: Cannot verify phone number. Contact Admin.');
       else setError(err.message || 'Login failed.');
     } finally {
       setLoading(false);
@@ -159,14 +153,9 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const appUser = await fetchUserDetailsWithRetry(result.user.uid, result.user.email);
-      
-      console.log("Sending Google login email to:", appUser.email); 
-      await sendLoginNotification(appUser.email, appUser.name);
-      
       onLogin(appUser);
     } catch (err: any) {
       if (auth.currentUser) await signOut(auth);
-
       if (err.code === 'auth/popup-closed-by-user') setError('Sign-in cancelled.');
       else setError(err.message || 'Google sign-in failed.');
     } finally {
@@ -175,135 +164,135 @@ export function Login({ onLogin, onNavigate }: LoginProps) {
   };
 
   return (
-    <div className="min-h-screen bg-[#F9FAFB] flex flex-col">
-      {/* Header with Image */}
-      <div className="bg-white border-b border-gray-200 py-6 px-4 sm:px-6">
-        <div className="max-w-md mx-auto flex flex-col items-center justify-center gap-3 text-center">
-          
-          <img 
-            src="/report-header.jpg" 
-            alt="Transport System" 
-            className="h-16 w-auto object-contain" 
-            onError={(e) => {
-                console.warn("Logo image failed to load"); 
-                e.currentTarget.style.display = 'none';
-            }}
-          />
-
-          <div className="mt-2">
-            <div className="text-xl font-semibold text-gray-900">Transport System</div>
-            <div className="text-xs text-gray-500">Carlos Embellishers / Eskimo Fashion Knitwear</div>
-          </div>
+    <div className="min-h-screen bg-[#F9FAFB] flex flex-col items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-lg p-8">
+        {/* LOGO */}
+        <div className="flex justify-center mb-4">
+             <img src="/report-header.jpg" alt="Logo" className="h-16 object-contain" onError={(e) => e.currentTarget.style.display='none'} />
         </div>
-      </div>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2 text-center">Transport System</h1>
+        <p className="text-gray-600 mb-6 text-center">Sign in to access dashboard</p>
 
-      {/* Login Form */}
-      <div className="flex-1 flex items-center justify-center p-4 sm:p-6">
-        <div className="w-full max-w-md">
-          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 sm:p-8">
-            <div className="mb-6">
-              <h1 className="text-2xl text-gray-900 mb-2">Welcome Back</h1>
-              <p className="text-gray-600">Sign in to continue</p>
-            </div>
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg flex items-start gap-2">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <div>{error}</div>
+          </div>
+        )}
 
-            {error && (
-              <div className={`mb-4 p-3 border text-sm rounded-lg flex items-start gap-2 ${
-                  error.includes("ACCESS DENIED") 
-                  ? "bg-red-100 border-red-200 text-red-800" 
-                  : "bg-red-50 border-red-200 text-red-600"
-              }`}>
-                <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                <div>{error}</div>
-              </div>
+        {/* Role Selector */}
+        <div className="flex gap-2 mb-6">
+            {['user', 'driver', 'admin'].map((role) => (
+            <button
+                key={role}
+                onClick={() => {
+                    setLoginType(role as any);
+                    setError('');
+                }}
+                className={`flex-1 py-2.5 rounded-lg capitalize text-sm font-medium transition-all ${
+                loginType === role ? 'bg-[#2563EB] text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+            >
+                {role}
+            </button>
+            ))}
+        </div>
+
+        {/* Login Form */}
+        <form onSubmit={handleLogin} className="space-y-4">
+            
+            {/* DYNAMIC INPUT: Phone or Email */}
+            {loginType === 'driver' ? (
+                <div>
+                    <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase mb-1 ml-1">
+                        <Phone className="w-4 h-4" /> Phone Number
+                    </label>
+                    <div className="relative">
+                        <input 
+                            type="tel" 
+                            value={phone} 
+                            onChange={e => setPhone(e.target.value)} 
+                            className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#2563EB] outline-none transition-all" 
+                            placeholder="07X XXX XXXX" 
+                            required 
+                        />
+                    </div>
+                </div>
+            ) : (
+                <div>
+                    <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase mb-1 ml-1">
+                        <Mail className="w-4 h-4" /> Email Address
+                    </label>
+                    <div className="relative">
+                        <input 
+                            type="email" 
+                            value={email} 
+                            onChange={e => setEmail(e.target.value)} 
+                            className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#2563EB] outline-none transition-all" 
+                            placeholder="name@company.com" 
+                            required 
+                        />
+                    </div>
+                </div>
             )}
 
-            {/* Role Selector */}
-            <div className="flex gap-2 mb-6">
-              {['user', 'driver', 'admin'].map((role) => (
-                <button
-                  key={role}
-                  type="button"
-                  onClick={() => setLoginType(role as any)}
-                  className={`flex-1 py-2.5 rounded-xl capitalize transition-all font-medium ${
-                    loginType === role
-                      ? 'bg-[#2563EB] text-white shadow-md'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {role}
-                </button>
-              ))}
+            <div>
+                <label className="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase mb-1 ml-1">
+                    <Lock className="w-4 h-4" /> Password
+                </label>
+                <div className="relative">
+                    <input 
+                        type={showPassword ? "text" : "password"} 
+                        value={password} 
+                        onChange={e => setPassword(e.target.value)} 
+                        className="w-full p-3 pr-10 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#2563EB] outline-none transition-all" 
+                        placeholder="••••••••" 
+                        required 
+                    />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                        {showPassword ? <EyeOff size={20}/> : <Eye size={20}/>}
+                    </button>
+                </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleGoogleLogin}
-              disabled={loading}
-              className="w-full flex items-center justify-center gap-3 px-4 py-3 border-2 border-gray-300 rounded-xl hover:bg-gray-50 transition-all mb-6 disabled:opacity-50"
-            >
-              <span className="text-gray-700 font-medium">Continue with Google</span>
+            <button type="submit" disabled={loading} className="w-full py-3 bg-[#2563EB] text-white rounded-xl font-bold hover:bg-[#1E40AF] disabled:opacity-70 transition-all shadow-sm mt-2">
+                {loading ? 'Signing In...' : `Sign In as ${loginType.charAt(0).toUpperCase() + loginType.slice(1)}`}
             </button>
+        </form>
 
-            <div className="relative mb-6">
-              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300"></div></div>
-              <div className="relative flex justify-center text-sm"><span className="px-4 bg-white text-gray-500">Or sign in with email</span></div>
-            </div>
-
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                <div className="relative">
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full px-4 py-3 pl-11 border border-gray-300 rounded-xl"
-                    placeholder="email@example.com"
-                  />
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+        {/* Google Login (Visible only for non-drivers, optional) */}
+        {loginType !== 'driver' && (
+            <>
+                <div className="relative my-6">
+                    <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200"></div></div>
+                    <div className="relative flex justify-center text-sm"><span className="px-2 bg-white text-gray-500">Or continue with</span></div>
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-4 py-3 pl-11 pr-11 border border-gray-300 rounded-xl"
-                    placeholder="••••••••"
-                  />
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                  <button
+                <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  >
-                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                  </button>
-                </div>
-              </div>
+                    onClick={handleGoogleLogin}
+                    disabled={loading}
+                    className="w-full py-3 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all flex items-center justify-center gap-2 font-medium"
+                >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                        <path fill="#EA4335" d="M12 4.63c1.61 0 3.06.56 4.21 1.64l3.16-3.16C17.45 1.18 14.97 0 12 0 7.7 0 3.99 2.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                    </svg>
+                    Sign in with Google
+                </button>
+            </>
+        )}
 
-              <button type="submit" disabled={loading} className="w-full py-3 bg-[#2563EB] text-white font-medium rounded-xl hover:bg-[#1E40AF] disabled:opacity-70">
-                {loading ? 'Signing in...' : 'Sign In'}
-              </button>
-            </form>
-
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              {loginType === 'admin' ? (
-                  <button onClick={() => onNavigate('admin-registration')} className="w-full py-2 text-sm text-[#2563EB] border border-[#2563EB] rounded-xl hover:bg-[#2563EB] hover:text-white transition-all">
+        <div className="mt-6 pt-6 border-t border-gray-200 text-center">
+            {loginType === 'admin' ? (
+                <button onClick={() => onNavigate('admin-registration')} className="text-sm text-[#2563EB] hover:underline font-medium">
                     Register New Admin
-                  </button>
-              ) : (
-                  <p className="text-center text-sm text-gray-500">
-                    Don't have an account? Contact Admin.
-                  </p>
-              )}
-            </div>
-          </div>
+                </button>
+            ) : (
+                <p className="text-sm text-gray-500">Don't have an account? Contact Admin.</p>
+            )}
         </div>
       </div>
     </div>
