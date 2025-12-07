@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Car, Calendar, CheckCircle, XCircle, Navigation, Users, AlertCircle, Shield, Lock, X, Clock, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Car, Calendar, CheckCircle, XCircle, Navigation, Users, AlertCircle, Shield, Lock, X, Clock, AlertTriangle, ChevronDown, ChevronUp,Plus } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
@@ -376,8 +376,8 @@ export function AdminDashboard({ user, onNavigate, onLogout }: AdminDashboardPro
                         {/*Quick Trip Card */}
                         <Card onClick={() => onNavigate('quick-book-trip')} className="p-6 cursor-pointer hover:shadow-lg transition-all">
                             <div className="flex items-center gap-3 mb-3">
-                                <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center">
-                                    <AlertCircle className="w-6 h-6 text-orange-600" />
+                                <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                                    <Plus className="w-6 h-6 text-white-600" />
                                 </div>
                                 <div>
                                     <div className="text-gray-900">Quick Trip Booking</div>

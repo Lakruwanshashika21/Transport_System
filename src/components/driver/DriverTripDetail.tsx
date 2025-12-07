@@ -1,12 +1,16 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 // 💥 CRITICAL FIX: Ensure all required Lucide icons are imported on this line 💥
-import { MapPin, User as UserIcon, Phone, Navigation, Play, Square, CheckCircle, ChevronDown, ChevronUp, AlertTriangle, Wrench, ArrowLeft, Gauge, User as PaxIcon, MessageSquare, Plus, Users as CombinedUsers, Search, Phone as PhoneIcon, Mail, Loader2, Trash2, Car, Calendar, Clock, FileText, Banknote, Upload, X } from 'lucide-react'; 
+import { 
+    MapPin, User as UserIcon, Phone, Navigation, Play, Square, CheckCircle, ChevronDown, ChevronUp, AlertTriangle, 
+    Wrench, ArrowLeft, Gauge, MessageSquare, Plus, Users as CombinedUsers, Search, Phone as PhoneIcon, Mail, Loader2, 
+    Trash2, Car, Calendar, Clock, FileText, Banknote, Upload, X 
+} from 'lucide-react'; 
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
 // Firebase Imports
-import { doc, getDoc, updateDoc, addDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { logAction } from '../../utils/auditLogger'; 
 
@@ -36,80 +40,98 @@ interface DriverTripDetailProps {
     onLogout: () => void;
 }
 
-// Helper Component for Collapsible Stops (Retained)
+// Helper Component for Collapsible Stops (REFINED STYLES)
 const DriverStopList = ({ destinations, finalDestination }: { destinations?: string[], finalDestination: string }) => {
     const [expanded, setExpanded] = useState(false);
     
-    if (!destinations || destinations.length === 0) {
+    // Ensure the destinations array is safe to iterate
+    const validDestinations = destinations?.filter(d => d && d.trim()) || [];
+    
+    // Fallback display for zero stops (Only the final destination)
+    if (validDestinations.length === 0) {
       return (
-           <div className="flex gap-4 items-start">
-             <div className="flex flex-col items-center mt-0.5">
-                <div className="w-3 h-3 bg-red-500 rounded-full"/>
-             </div>
+            <div className="flex gap-4 items-start py-2">
+             <div className="w-3 h-3 bg-red-500 rounded-full flex-shrink-0 mt-2"/>
              <div>
-                <div className="text-xs text-gray-500 uppercase">Drop-off</div>
-                <div className="text-gray-900 font-medium">{finalDestination}</div>
+                 <div className="text-xs text-gray-500 uppercase">Drop-off</div>
+                 <div className="text-gray-900 font-medium">{finalDestination}</div>
              </div>
-           </div>
+            </div>
       );
     }
     
-    const allPoints = [...(destinations || []), finalDestination]; // Ensure all points are included in the array for accurate indexing
-    const pointsToShow = expanded ? allPoints : allPoints.slice(0, 2);
+    // All points including the final drop-off
+    const allPoints = [...validDestinations, finalDestination];
+
+    // Component for a single stop row
+    const StopRow = ({ stopName, index, isFinal, isHidden }: { stopName: string, index: number, isFinal: boolean, isHidden: boolean }) => {
+        const isMiddleStop = index > 0 && index < allPoints.length - 1;
+        const stopLabel = index === allPoints.length - 1 
+            ? 'Drop-off' 
+            : index === 0 
+                ? 'Stop 1' 
+                : `Stop ${index + 1}`;
+        const pointColor = isFinal ? 'bg-red-500' : 'bg-blue-500';
+
+        return (
+            <div className={`flex gap-4 items-start ${index > 0 ? 'pt-2' : ''} ${isHidden ? 'hidden' : ''}`}>
+                <div className="flex flex-col items-center mt-0.5 flex-shrink-0">
+                    {index > 0 && <div className="w-0.5 h-full bg-gray-200" style={{ height: 'calc(100% + 4px)' }} />}
+                    <div className={`w-3 h-3 ${pointColor} rounded-full ${!isFinal ? 'border-2 border-white shadow-sm' : ''} flex-shrink-0`}/>
+                    {!isFinal && <div className="w-0.5 h-full bg-gray-200" style={{ height: 'calc(100% + 4px)' }} />}
+                </div>
+                <div className={`${isFinal ? 'mt-0.5' : ''}`}>
+                    <div className="text-xs text-gray-500 uppercase">{stopLabel}</div>
+                    <div className={`text-gray-900 ${isFinal ? 'font-semibold' : ''}`}>{stopName}</div>
+                </div>
+            </div>
+        );
+    };
 
     return (
-      <>
-        <div className="flex gap-4 items-start">
-             <div className="flex flex-col items-center mt-0.5">
-                 <div className="w-3 h-3 bg-blue-500 rounded-full border-2 border-white shadow-sm"/>
-                 <div className="w-0.5 h-full bg-gray-200"/>
-             </div>
-             <div>
-                 <div className="text-xs text-gray-500 uppercase">Stop 1</div>
-                 <div className="text-gray-900">{destinations[0]}</div>
-             </div>
+        <div className="space-y-1">
+            {/* First Stop (Pickup is assumed before the list starts in the parent component) */}
+            {validDestinations.length > 0 && (
+                <StopRow 
+                    stopName={validDestinations[0]} 
+                    index={0} 
+                    isFinal={false} 
+                    isHidden={false}
+                />
+            )}
+            
+            {/* Render rest of stops if expanded */}
+            {validDestinations.slice(1).map((stop, index) => (
+                <StopRow 
+                    key={`stop-${index + 1}`}
+                    stopName={stop} 
+                    index={index + 1} // Actual index starts from 1 (Stop 2)
+                    isFinal={false} 
+                    isHidden={!expanded}
+                />
+            ))}
+            
+            {/* Toggle Button */}
+            {validDestinations.length > 1 && (
+                <div className="flex justify-start my-2 ml-7">
+                    <button 
+                        onClick={() => setExpanded(!expanded)} 
+                        className="flex items-center text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors p-1 -ml-1 rounded-md"
+                    >
+                        {expanded ? 'Show Less Stops' : `Show ${validDestinations.length - 1} More Stops`}
+                        {expanded ? <ChevronUp className="w-4 h-4 ml-1" /> : <ChevronDown className="w-4 h-4 ml-1" />}
+                    </button>
+                </div>
+            )}
+            
+            {/* Final Drop-off */}
+            <StopRow 
+                stopName={finalDestination} 
+                index={validDestinations.length} // Index is length of destinations array
+                isFinal={true} 
+                isHidden={false}
+            />
         </div>
-        
-        {/* Render rest of stops if expanded, or the expand button */}
-        {expanded && destinations.slice(1).map((stop, index) => (
-             <div key={index + 1} className="flex gap-4 items-start pt-2">
-                 <div className="flex flex-col items-center">
-                     <div className="w-0.5 h-full bg-gray-200"/>
-                     <div className="w-3 h-3 bg-blue-500 rounded-full border-2 border-white shadow-sm"/>
-                     <div className="w-0.5 h-full bg-gray-200"/>
-                 </div>
-                 <div>
-                     <div className="text-xs text-gray-500 uppercase">Stop {index + 2}</div>
-                     <div className="text-gray-900">{stop}</div>
-                 </div>
-             </div>
-        ))}
-        
-        {/* Toggle Button */}
-        {destinations.length > 1 && (
-            <div className="flex justify-center my-2">
-                <button 
-                    onClick={() => setExpanded(!expanded)} 
-                    className="flex items-center text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
-                >
-                    {expanded ? 'Show Less Stops' : `Show ${destinations.length - 1} More Stops`}
-                    {expanded ? <ChevronUp className="w-4 h-4 ml-1" /> : <ChevronDown className="w-4 h-4 ml-1" />}
-                </button>
-            </div>
-        )}
-        
-        {/* Final Drop-off */}
-        <div className="flex gap-4 items-start pt-2">
-            <div className="flex flex-col items-center">
-               <div className="w-0.5 h-full bg-gray-200"/>
-               <div className="w-3 h-3 bg-red-500 rounded-full"/>
-            </div>
-            <div>
-               <div className="text-xs text-gray-500 uppercase">Drop-off</div>
-               <div className="text-gray-900 font-medium">{finalDestination}</div>
-            </div>
-        </div>
-      </>
     );
 };
     
@@ -119,20 +141,21 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
     const [loading, setLoading] = useState(true);
     const [showSummary, setShowSummary] = useState(false);
     
+    // Odometer Modal State
     const [showOdometerModal, setShowOdometerModal] = useState(false);
     const [odometerInput, setOdometerInput] = useState('');
     const [modalActionType, setModalActionType] = useState<'start' | 'end' | null>(null);
 
+    // Breakdown Modal State
     const [showBreakdownModal, setShowBreakdownModal] = useState(false);
     const [breakdownReason, setBreakdownReason] = useState('');
     const [breakdownOdometer, setBreakdownOdometer] = useState('');
     const [lastVisitedStop, setLastVisitedStop] = useState('');
     const [breakdownAddress, setBreakdownAddress] = useState('');
     const [locationSuggestions, setLocationSuggestions] = useState<any[]>([]); 
-    // State to manage the loading/fetching of GPS data
     const [gpsLoading, setGpsLoading] = useState(false); 
     
-    // Fine Claim Modal state (Retained)
+    // Fine Claim Modal state
     const [showFineClaimModal, setShowFineClaimModal] = useState(false);
     const [fineClaimData, setFineClaimData] = useState({
         fineDate: new Date().toISOString().split('T')[0], 
@@ -147,11 +170,14 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
     const driverLocation = useDriverGPS();
 
     // Collect all destinations and the final drop-off
-    const allTripStops = trip ? [
-        trip.pickup, 
-        ...(trip.destinations || []),
-        trip.destination // Include final drop-off
-    ] : [];
+    const allTripStops = useMemo(() => {
+        return trip ? [
+            trip.pickup, 
+            ...(trip.destinations?.filter((d: string) => d && d.trim()) || []), // Filter out empty destinations
+            trip.destination // Include final drop-off
+        ] : [];
+    }, [trip]);
+
 
     // --- 🎯 CORRECTED LOCATION HANDLERS for Breakdown Modal ---
     const handleLocationSearch = async (query: string) => {
@@ -159,6 +185,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
         if (query.length < 3) { setLocationSuggestions([]); return; }
         
         const lowerQuery = query.toLowerCase();
+        // Mocked results
         const specialMatches = [
             { display_name: "Carlos Embellishers (Pvt) Ltd - Veyangoda (Head Office)", lat: 7.1667, lon: 80.0500 },
             { display_name: "Eskimo Fashion Knitwear - Negombo (Main)", lat: 7.2008, lon: 79.8737 },
@@ -185,48 +212,35 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
         }
         setGpsLoading(true);
 
-        // Use real GPS if available, otherwise fallback to simulated hook location
+        const resolveAddress = (lat: number, lng: number, isReal: boolean) => {
+            // MOCK: Reverse geocoding
+            const address = isReal 
+                ? `Current GPS Location (${lat.toFixed(4)})` 
+                : `Simulated Handover Point (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+            setBreakdownAddress(address);
+            setGpsLoading(false);
+            setLocationSuggestions([]);
+        };
+
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
-                async (position) => {
-                    const lat = position.coords.latitude;
-                    const lng = position.coords.longitude;
-                    
-                    try {
-                        const response = { json: async () => ({ display_name: `Current GPS Location (${lat.toFixed(4)})` }) };
-                        const data = await response.json();
-                        const address = data.display_name || `GPS: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-                        setBreakdownAddress(address);
-                    } catch (e) {
-                        setBreakdownAddress(`GPS: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
-                    }
-                    setGpsLoading(false);
-                    setLocationSuggestions([]);
+                (position) => {
+                    resolveAddress(position.coords.latitude, position.coords.longitude, true);
                 },
                 (error) => {
                     alert("GPS Error: " + error.message);
-                    setGpsLoading(false);
+                    resolveAddress(driverLocation.lat, driverLocation.lng, false); // Fallback to hook location
                 },
                 { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
             );
         } else {
-            // Fallback for simulated hook location (driverLocation)
-            try {
-                const response = { json: async () => ({ display_name: `Simulated Handover Point` }) };
-                const data = await response.json();
-                const address = data.display_name || `GPS: ${driverLocation.lat.toFixed(4)}, ${driverLocation.lng.toFixed(4)}`;
-                setBreakdownAddress(address);
-            } catch (e) {
-                setBreakdownAddress(`GPS: ${driverLocation.lat.toFixed(4)}, ${driverLocation.lng.toFixed(4)}`);
-            }
-            setGpsLoading(false);
-            setLocationSuggestions([]);
+            resolveAddress(driverLocation.lat, driverLocation.lng, false); // Fallback for simulated hook location
         }
     };
     // --- END CORRECTED LOCATION HANDLERS ---
 
 
-    // 1. Fetch Trip Data (Retained)
+    // 1. Fetch Trip Data 
     useEffect(() => {
         const fetchTrip = async () => {
             if (!tripId) return;
@@ -236,9 +250,9 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                 const docSnap = await getDoc(docRef);
 
                 if (docSnap.exists()) {
-                    let data = { id: docSnap.id, ...docSnap.data() };
+                    let data: any = { id: docSnap.id, ...docSnap.data() };
                         
-                    // 🚨 Fetch Customer details (if available)
+                    // 🚨 Fetch Customer details 
                     if (data.userId) {
                         const userSnap = await getDoc(doc(db, "users", data.userId));
                         if (userSnap.exists()) {
@@ -247,12 +261,11 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                         }
                     }
 
-                    // 🚨 Fetch Original Driver details (if applicable for re-assigned trip)
+                    // 🚨 Fetch Original Driver details
                     if (data.originalDriverId) {
                         const driverSnap = await getDoc(doc(db, "users", data.originalDriverId));
                         if (driverSnap.exists()) {
                             const driverData = driverSnap.data();
-                            // Store original driver contact details
                             data = { ...data, originalDriverName: driverData.fullName, originalDriverPhone: driverData.phone };
                         }
                     }
@@ -263,7 +276,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                     if (['completed', 'broken-down', 'cancelled', 'rejected'].includes(data.status)) {
                         setShowSummary(true);
                     } else {
-                        setShowSummary(false); // Ensure modal view is ready for 'approved' or 're-assigned'
+                        setShowSummary(false);
                     }
                 } else {
                     alert("Trip not found!");
@@ -279,22 +292,20 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
         fetchTrip();
     }, [tripId, onNavigate, user.id]);
 
-    // 2. Handlers (Retained)
+    // 2. Handlers
     const handleStartTripClick = () => {
-        // Show modal to ask for odometer
         setOdometerInput(trip?.odometerStart || '');
         setModalActionType('start');
         setShowOdometerModal(true);
     };
 
     const handleEndTripClick = () => {
-        // Show modal to ask for odometer
-        setOdometerInput(''); // Clear for new end reading
+        setOdometerInput(''); 
         setModalActionType('end');
         setShowOdometerModal(true);
     };
     
-    // 🆕 NEW HANDLER: Submits Odometer and updates trip status
+    // Submits Odometer and updates trip status
     const handleSubmitOdometer = async () => {
         if (!trip || !odometerInput) { alert("Odometer reading required."); return; }
         const odometer = Number(odometerInput);
@@ -304,12 +315,17 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
             const tripRef = doc(db, "trip_requests", trip.id);
             
             if (modalActionType === 'start') {
+                if (odometer <= (trip.odometerEndPrevious || 0) && trip.odometerEndPrevious > 0) {
+                     alert(`Error: Start Odometer (${odometer}) cannot be less than or equal to the last recorded End Odometer (${trip.odometerEndPrevious}).`);
+                     return;
+                }
+                
                 await updateDoc(tripRef, {
                     status: 'in-progress',
                     startedAt: new Date().toISOString(),
-                    odometerStart: odometer // 🆕 SAVE ODOMETER START
+                    odometerStart: odometer 
                 });
-                // Update Vehicle/Driver Status to In-Use (redundant but safe check)
+
                 if (trip.vehicleId) { await updateDoc(doc(db, "vehicles", trip.vehicleId), { status: 'in-use' }); }
                 if (user.id) { await updateDoc(doc(db, "users", user.id), { status: 'in-use', currentTripId: trip.id }); }
 
@@ -326,22 +342,22 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                 const distanceRun = odometer - (trip.odometerStart || 0);
                 
                 await updateDoc(tripRef, {
-                    status: 'completed', // 🎯 CRITICAL: Mark as completed
+                    status: 'completed', 
                     endedAt: new Date().toISOString(),
-                    odometerEnd: odometer, // 🆕 SAVE ODOMETER END
+                    odometerEnd: odometer, 
                     kmRun: distanceRun
                 });
 
-                // Update Vehicle/Driver Status to Available
                 if (trip.vehicleId) { await updateDoc(doc(db, "vehicles", trip.vehicleId), { status: 'available' }); }
                 if (user.id) { await updateDoc(doc(db, "users", user.id), { status: 'available', currentTripId: null }); }
                 
                 setTrip((prev: any) => ({ ...prev, status: 'completed', odometerEnd: odometer, kmRun: distanceRun }));
                 
-                // 💥 FIX 2: Upon successful trip completion, immediately ask for the Police Fine Claim 💥
+                // 💥 FIX 2: Upon successful trip completion, close Odometer modal, show Summary, and prompt for Fine Claim 💥
+                setShowOdometerModal(false); 
+                setShowSummary(true);
                 setShowFineClaimModal(true); 
-                setShowOdometerModal(false); // Close Odometer modal
-                return; // Stop here to handle fine modal flow
+                return; 
             }
             
             setShowOdometerModal(false);
@@ -354,7 +370,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
         }
     };
 
-    // 🆕 NEW HANDLER: Breakdown/Cancel Trip
+    // Breakdown/Cancel Trip
     const handleReportBreakdown = async () => {
         if (!trip || !breakdownReason.trim() || !breakdownOdometer || !lastVisitedStop || !breakdownAddress) {
           alert("Please provide all required breakdown details.");
@@ -362,6 +378,10 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
         }
         if (!driverLocation) {
              alert("Cannot report breakdown: GPS location unavailable.");
+             return;
+        }
+        if (Number(breakdownOdometer) < (trip.odometerStart || 0)) {
+             alert(`Error: Breakdown Odometer (${breakdownOdometer}) cannot be less than Start Odometer (${trip.odometerStart || 0}).`);
              return;
         }
 
@@ -375,20 +395,22 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
           
           // 1. Update Trip Status
           await updateDoc(tripRef, {
-            status: 'broken-down', // 🆕 Set new status
+            status: 'broken-down', 
             cancelledAt: new Date().toISOString(),
-            breakdownReason: breakdownReason, // 🆕 Store reason
-            breakdownLocation: breakdownAddress, // 🆕 Store driver's input/selected address
-            breakdownGPS: breakdownLocationGPS, // 🆕 Store GPS coordinates for Admin analysis
-            breakdownOdometer: Number(breakdownOdometer), // 🆕 Store odometer at breakdown
-            lastVisitedStop: lastVisitedStop, // 🆕 Store last place reached/missed
+            breakdownReason: breakdownReason, 
+            breakdownLocation: breakdownAddress, 
+            breakdownGPS: breakdownLocationGPS, 
+            breakdownOdometer: Number(breakdownOdometer), 
+            lastVisitedStop: lastVisitedStop, 
+            // Store the current Odometer reading to be used as 'odometerEndPrevious' for the next driver
+            odometerEndPrevious: Number(breakdownOdometer)
           });
 
           // 2. Update Vehicle Status for maintenance
           if (trip.vehicleId) {
             const vehicleRef = doc(db, "vehicles", trip.vehicleId);
             await updateDoc(vehicleRef, { 
-                status: 'in-maintenance', // 🆕 Mark vehicle for maintenance
+                status: 'in-maintenance', 
                 lastTripId: trip.id 
             });
           }
@@ -399,9 +421,9 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
 
           // 4. Log the action for admin
           await logAction(user.email, 'BREAKDOWN_REPORTED',
-             `Driver reported breakdown for ${trip.vehicleNumber} during trip #${trip.serialNumber}. Reason: ${breakdownReason}. Stop: ${lastVisitedStop}`,
-             { tripId: trip.id, breakdownLocation: breakdownAddress }
-          );
+                `Driver reported breakdown for ${trip.vehicleNumber} during trip #${trip.serialNumber}. Reason: ${breakdownReason}. Stop: ${lastVisitedStop}`,
+                { tripId: trip.id, breakdownLocation: breakdownAddress }
+           );
           
           // 5. Update UI
           setTrip((prev: any) => ({ 
@@ -411,7 +433,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
               breakdownLocation: breakdownAddress 
           }));
           setShowBreakdownModal(false);
-          setShowSummary(true); // Show a summary/message screen
+          setShowSummary(true); 
           alert('Breakdown reported. Admin has been notified for vehicle replacement.');
 
         } catch (error) {
@@ -420,7 +442,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
         }
     };
     
-    // 🎯 UPDATED HANDLER: Submit Police Fine Claim - Uses trip details automatically
+    // Submit Police Fine Claim
     const handleReportFine = async () => {
         if (!fineClaimData.policeStationPlace || !fineClaimData.amount || !fineClaimData.reason || !fineClaimData.fineDate) {
             alert("Please fill in the fine date, police station/place, reason, and amount of the fine.");
@@ -444,13 +466,13 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                 fineTicketUrl: fineClaimData.photoUrl || 'N/A',
                 
                 // Status
-                status: 'pending', // IMPORTANT: Status starts as pending
-                claimedDate: new Date().toISOString() // Date the driver reported it
+                status: 'pending', 
+                claimedDate: new Date().toISOString()
             });
 
             alert("Fine claim submitted successfully! Admin will review.");
             setShowFineClaimModal(false);
-            setShowSummary(true); // Ensure summary view is shown after successful submission
+            setShowSummary(true); 
             
         } catch (e) {
             console.error(e);
@@ -460,108 +482,92 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
 
 
     const handleCompleteSummary = () => {
-      onNavigate('driver-dashboard');
+        onNavigate('driver-dashboard');
     };
 
     if (loading) return <div className="p-10 text-center text-lg font-medium">Loading Trip Details...</div>;
     if (!trip) return <div className="p-10 text-center text-red-600 font-medium">Trip not found or ID is missing.</div>;
 
-    // Check if the trip is completed (The only time the driver should see the fine claim button)
     const isTripCompleted = trip.status === 'completed';
-    // Check if the trip is assigned and ready to start (Approved/Reassigned, no start Odo, and is Today)
     const isReadyToStart = (trip.status === 'approved' || trip.status === 'reassigned') && !trip.odometerStart && isToday(trip.date);
+    const isTripActive = trip.status === 'in-progress';
 
     // Determine the pickup location for the route overview
-    // If re-assigned, the pickup is the breakdown location of the previous vehicle.
     const effectivePickup = trip.status === 'reassigned' && trip.breakdownLocation 
-                            ? trip.breakdownLocation 
-                            : trip.pickup;
+                               ? trip.breakdownLocation 
+                               : trip.pickup;
 
 
     return (
-        <div className="min-h-screen bg-gray-50"> {/* Standardized background to gray-50 */}
+        <div className="min-h-screen bg-gray-50"> 
             <TopNav user={user} onNavigate={onNavigate} onLogout={onLogout} />
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8"> {/* Increased max-width and padding */}
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                
+                {/* Header and Status */}
                 <div className="mb-6">
-                    <button onClick={() => onNavigate('driver-dashboard')} className="text-blue-600 mb-4 font-medium hover:text-blue-800 transition-colors">← Back to Dashboard</button>
-                    <h1 className="text-3xl font-extrabold text-gray-900">Trip Details <span className="text-gray-500 font-medium">#{trip.serialNumber || trip.id.slice(0, 8)}</span></h1>
-                    <span className={`inline-flex items-center px-3 py-1 mt-2 rounded-full text-sm font-semibold capitalize ${
-                        trip.status === 'approved' || trip.status === 'reassigned' ? 'bg-blue-100 text-blue-800' :
-                        trip.status === 'in-progress' ? 'bg-green-100 text-green-800' :
-                        trip.status === 'completed' ? 'bg-gray-200 text-gray-700' :
-                        'bg-yellow-100 text-yellow-800'
-                    }`}>
-                        <Car className="w-4 h-4 mr-1"/> Status: **{trip.status.replace('-', ' ')}**
-                    </span>
-                    {trip.status === 'reassigned' && <p className='text-orange-600 font-semibold mt-2'>This trip was re-assigned to you due to a breakdown.</p>}
+                    <button onClick={() => onNavigate('driver-dashboard')} className="text-blue-600 mb-4 font-medium hover:text-blue-800 transition-colors flex items-center gap-1">
+                        <ArrowLeft className='w-4 h-4' /> Back to Dashboard
+                    </button>
+                    <h1 className="text-3xl font-extrabold text-gray-900 flex items-baseline gap-2">
+                        Trip Details 
+                        <span className="text-gray-500 font-medium text-xl">#{trip.serialNumber || trip.id.slice(0, 8)}</span>
+                    </h1>
+                    <Badge status={trip.status} />
+                    
+                    {trip.status === 'reassigned' && (
+                        <p className='text-orange-600 font-semibold mt-2 flex items-center gap-1'>
+                            <AlertTriangle className='w-4 h-4'/> This trip was re-assigned to you due to a breakdown.
+                        </p>
+                    )}
                 </div>
                 
-                {/* Contact Info Card for Reassigned Driver */}
-                {trip.status === 'reassigned' && (
-                    <Card className="p-6 mb-6 bg-yellow-50 border border-yellow-300">
-                        <h2 className="text-lg font-bold text-yellow-800 mb-3 flex items-center gap-2"><AlertTriangle className="w-5 h-5"/> Handover Details (Re-assigned Trip)</h2>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-                            {/* Customer Contact */}
-                            <div>
-                                <p className='font-semibold text-gray-700'>Customer:</p>
-                                <p className='text-gray-900'>{trip.customerName || trip.customer || 'N/A'}</p>
-                                <a href={`tel:${trip.customerPhone}`} className="text-blue-600 flex items-center gap-1 hover:underline">
-                                    <PhoneIcon className='w-3 h-3'/> {trip.customerPhone || 'N/A'}
-                                </a>
-                            </div>
-                            {/* Original Driver Contact */}
-                            <div>
-                                <p className='font-semibold text-gray-700'>Original Driver (Contact):</p>
-                                <p className='text-gray-900'>{trip.originalDriverName || 'N/A'}</p>
-                                <a href={`tel:${trip.originalDriverPhone}`} className="text-blue-600 flex items-center gap-1 hover:underline">
-                                    <PhoneIcon className='w-3 h-3'/> {trip.originalDriverPhone || 'N/A'}
-                                </a>
-                            </div>
-                             {/* Breakdown Location */}
-                            <div>
-                                <p className='font-semibold text-gray-700'>Handover Location:</p>
-                                {/* 💥 FIX: Use trip.breakdownLocation for the handover point address 💥 */}
-                                <p className='text-gray-900'>{trip.breakdownLocation || 'N/A'}</p> 
-                                <span className='text-xs text-yellow-700'>Your new pickup point.</span>
-                            </div>
-                        </div>
-                    </Card>
-                )}
-
+                {/* --- Main Content Layout --- */}
                 <div className='lg:flex lg:gap-8'>
-                    {/* Main Content Area */}
+                    
+                    {/* Left Column: Route Details and Odometer */}
                     <div className="lg:flex-1 space-y-6">
+                        
                         {/* Route Details Card */}
                         <Card className="p-6">
-                            <h2 className="text-xl font-bold mb-6 text-gray-800">Route Overview</h2>
+                            <h2 className="text-xl font-bold mb-6 text-gray-800 flex items-center gap-2"><MapPin className='w-5 h-5'/> Route Overview</h2>
                             <div className="space-y-4">
                                 {/* Pickup (Effective Pickup Location) */}
                                 <div className="flex gap-4 items-start">
-                                    <div className="flex flex-col items-center mt-0.5">
+                                    <div className="flex flex-col items-center mt-0.5 flex-shrink-0">
                                         <div className="w-3 h-3 bg-green-600 rounded-full border-2 border-white shadow-sm"/>
-                                        <div className="w-0.5 h-full bg-gray-200"/>
+                                        <div className="w-0.5 h-full bg-gray-200" style={{ height: 'calc(100% + 4px)' }}/>
                                     </div>
-                                    <div>
+                                    <div className='mt-0.5'>
                                         <div className="text-xs text-gray-500 uppercase">Start/Pickup</div>
                                         <div className="text-gray-900 font-semibold">{effectivePickup}</div>
                                     </div>
                                 </div>
 
-                                {/* Stop List (Uses the extended component now) */}
+                                {/* Stop List (Refined Component) */}
                                 <DriverStopList destinations={trip.destinations} finalDestination={trip.destination} />
                                 
                             </div>
                         </Card>
                         
-                        {/* Optional: Summary of recorded Odometer */}
+                        {/* Odometer Summary (Conditional Card) */}
                         {trip.odometerStart && (
                             <Card className="p-4 border-l-4 border-blue-500 bg-blue-50">
-                                <h3 className="text-base font-semibold text-blue-700 flex items-center gap-2"><Gauge className='w-4 h-4'/> Odometer Readings</h3>
-                                <p className='text-sm text-gray-700 mt-1'>
-                                    **Start Odometer:** {trip.odometerStart} km &nbsp; | &nbsp; 
-                                    **End Odometer:** {trip.odometerEnd ? `${trip.odometerEnd} km` : 'N/A'}
-                                    {isTripCompleted && <span className='font-bold ml-2 text-green-700'> (Distance Run: {trip.kmRun} km)</span>}
-                                </p>
+                                <h3 className="text-base font-semibold text-blue-700 flex items-center gap-2">
+                                    <Gauge className='w-4 h-4'/> Odometer Readings
+                                </h3>
+                                <div className='grid grid-cols-2 gap-2 text-sm text-gray-700 mt-2'>
+                                    <p>
+                                        **Start Odo:** <span className='font-semibold'>{trip.odometerStart} km</span>
+                                    </p>
+                                    <p>
+                                        **End Odo:** <span className='font-semibold'>{trip.odometerEnd ? `${trip.odometerEnd} km` : 'N/A'}</span>
+                                    </p>
+                                    {isTripCompleted && (
+                                        <p className='col-span-2 font-bold text-green-700 pt-2 border-t border-blue-200'>
+                                            **Distance Run:** {trip.kmRun} km
+                                        </p>
+                                    )}
+                                </div>
                             </Card>
                         )}
                         
@@ -569,9 +575,10 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                     
                     {/* Right Column: Customer and Actions */}
                     <div className="lg:w-1/3 mt-6 lg:mt-0 space-y-6">
-                        {/* Customer Card (Retained) */}
+                        
+                        {/* Customer Card */}
                         <Card className="p-6">
-                            <h2 className="text-xl font-bold mb-4 text-gray-800">Customer Details</h2>
+                            <h2 className="text-xl font-bold mb-4 text-gray-800 flex items-center gap-2"><UserIcon className='w-5 h-5'/> Customer Details</h2>
                             <div className="flex items-center gap-4 mb-4">
                                 <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center"><UserIcon className="w-6 h-6 text-blue-600"/></div>
                                 <div>
@@ -589,88 +596,111 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
 
                         {/* Actions Card */}
                         {!showSummary && (
-                            <Card className="p-6">
-                                <h2 className="text-xl font-bold mb-4 text-gray-800">Trip Actions</h2>
-                                {/* Start Trip Button Logic - Uses isReadyToStart and isTripActive */}
-                                {isReadyToStart ? (
-                                     // Trip is assigned/reassigned and is today - ready for ODO input
-                                    <button onClick={handleStartTripClick} className="w-full py-4 bg-green-600 text-white rounded-xl flex justify-center gap-2 hover:bg-green-700 transition-all font-semibold">
-                                        <Play className="w-5 h-5" /> Start Trip
+                            <Card className="p-6 space-y-4">
+                                <h2 className="text-xl font-bold text-gray-800">Trip Actions</h2>
+                                
+                                {isReadyToStart && (
+                                    <button onClick={handleStartTripClick} className="w-full py-4 bg-green-600 text-white rounded-xl flex justify-center gap-2 hover:bg-green-700 transition-all font-semibold shadow-lg">
+                                        <Play className="w-5 h-5" /> Start Trip (Record Odometer)
                                     </button>
-                                ) : (
+                                )}
+                                
+                                {isTripActive && (
                                     <>
-                                        {trip.status === 'in-progress' && (
-                                            <>
-                                                <button onClick={handleEndTripClick} className="w-full py-4 bg-red-600 text-white rounded-xl flex justify-center gap-2 hover:bg-red-700 transition-all font-semibold mb-4">
-                                                    <Square className="w-5 h-5" /> End Trip (Complete)
-                                                </button>
-                                                <button 
-                                                    onClick={() => setShowBreakdownModal(true)} 
-                                                    className="w-full py-3 border border-yellow-500 text-yellow-700 rounded-xl flex justify-center gap-2 hover:bg-yellow-50 transition-all font-medium"
-                                                >
-                                                    <Wrench className="w-5 h-5" /> Report Breakdown / Cancel
-                                                </button>
-                                            </>
-                                        )}
-                                        {/* Display read-only status for active but non-actionable states */}
-                                        {(trip.status === 'approved' || trip.status === 'reassigned') && trip.odometerStart && (
-                                            <div className="w-full py-3 bg-blue-100 text-blue-700 rounded-xl flex justify-center gap-2 font-bold">
-                                                <CheckCircle className="w-5 h-5" /> Trip Started: In-Progress
-                                            </div>
-                                        )}
-                                        {/* Display message for future trips or trips waiting for start ODO */}
-                                        {(!isReadyToStart && !isTripCompleted && !trip.odometerStart) && (
-                                            <div className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl flex justify-center text-sm font-medium">
-                                                Awaiting Start Day ({trip.date})
-                                            </div>
-                                        )}
+                                        <button onClick={handleEndTripClick} className="w-full py-4 bg-red-600 text-white rounded-xl flex justify-center gap-2 hover:bg-red-700 transition-all font-semibold shadow-lg">
+                                            <Square className="w-5 h-5" /> End Trip (Complete)
+                                        </button>
+                                        <button 
+                                            onClick={() => setShowBreakdownModal(true)} 
+                                            className="w-full py-3 border border-yellow-500 text-yellow-700 rounded-xl flex justify-center gap-2 hover:bg-yellow-50 transition-all font-medium"
+                                        >
+                                            <Wrench className="w-5 h-5" /> Report Breakdown / Cancel
+                                        </button>
                                     </>
                                 )}
+                                
+                                {/* Status Messages */}
+                                {(!isReadyToStart && !isTripCompleted && !isTripActive) && (
+                                     <div className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl flex justify-center text-sm font-medium">
+                                         Awaiting Start Day ({trip.date})
+                                     </div>
+                                )}
+                                
                             </Card>
                         )}
+                        
                     </div>
                 </div>
 
-                {/* --- Summary View (After Completion/Breakdown) --- */}
+                {/* --- SUMMARY VIEW (After Completion/Breakdown) --- */}
                 {showSummary && (
-                    <Card className="p-8 max-w-2xl mx-auto text-center mt-6">
-                        <div className={`w-20 h-20 ${isTripCompleted ? 'bg-green-100' : 'bg-yellow-100'} rounded-full flex items-center justify-center mx-auto mb-4`}>
-                            {isTripCompleted ? <CheckCircle className="w-10 h-10 text-green-600" /> : <AlertTriangle className="w-10 h-10 text-yellow-600" />} 
-                        </div>
-                        <h2 className="text-2xl font-bold mb-2 text-gray-900">
-                            {isTripCompleted ? 'Trip Completed Successfully' : 'Trip Interrupted'}
-                        </h2>
-                        {(isTripCompleted || trip.status === 'broken-down') ? (
-                            <>
-                                <p className="text-gray-700 mb-6">
-                                    **Distance Traveled:** {trip.kmRun || 'N/A'} km.
-                                    <span className='block mt-1 text-sm'>Vehicle and driver status updated to **Available**.</span>
-                                </p>
-                                
-                                {/* Report Police Fine Button - Now visible if completed or broken down */}
-                                <button 
-                                    onClick={() => setShowFineClaimModal(true)} 
-                                    className="mt-4 w-full py-3 bg-red-600 text-white rounded-xl flex justify-center gap-2 hover:bg-red-700 transition-all font-semibold mb-4"
-                                >
-                                    <Banknote className="w-5 h-5"/> Report Police Fine
-                                </button>
-                                
-                                <button onClick={handleCompleteSummary} className="w-full py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-semibold">Back to Dashboard</button>
-                            </>
-                        ) : (
-                            <div className="text-sm text-gray-700">
-                                <p className="font-medium text-yellow-700 text-lg">Vehicle Breakdown Reported.</p>
-                                <p className="mt-2 text-base">**Reason:** <span className="font-semibold">{trip.breakdownReason}</span></p>
-                                <p className="mt-3 text-red-600 font-medium">The Admin has been notified and is arranging a replacement vehicle/maintenance.</p>
-                                <button onClick={handleCompleteSummary} className="mt-6 w-full py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-semibold">Back to Dashboard</button>
+                    <Card className="p-8 max-w-xl mx-auto mt-8 shadow-2xl">
+                        <div className="text-center mb-6">
+                            {/* Icon & Title */}
+                            <div className={`w-20 h-20 ${isTripCompleted ? 'bg-green-100' : 'bg-yellow-100'} rounded-full flex items-center justify-center mx-auto mb-4`}>
+                                {isTripCompleted ? <CheckCircle className="w-10 h-10 text-green-600" /> : <AlertTriangle className="w-10 h-10 text-yellow-600" />} 
                             </div>
-                        )}
+                            <h2 className="text-2xl font-bold mb-2 text-gray-900">
+                                {isTripCompleted ? 'Trip Completed Successfully' : `Trip Ended: ${trip.status.toUpperCase().replace('-', ' ')}`}
+                            </h2>
+                            <p className="text-gray-700 text-sm max-w-sm mx-auto">
+                                {isTripCompleted 
+                                    ? `Total distance traveled: **${trip.kmRun || 'N/A'} km**. The trip is now closed.`
+                                    : `Vehicle breakdown reported at **${trip.breakdownLocation}**. Admin has been notified for reassignment/maintenance.`
+                                }
+                            </p>
+                        </div>
+                        
+                        {/* Summary Details Table (Refined) */}
+                        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6 space-y-2 text-sm">
+                            <div className="flex justify-between border-b pb-1">
+                                <span className="text-gray-600 font-medium">Trip:</span>
+                                <span className="font-semibold text-gray-800">#{trip.serialNumber || trip.id.slice(0, 8)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-gray-600 font-medium">Vehicle:</span>
+                                <span className="font-semibold text-gray-800">{trip.vehicleNumber || 'N/A'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-gray-600 font-medium">Final Odometer:</span>
+                                <span>{trip.odometerEnd || trip.breakdownOdometer || 'N/A'} km</span>
+                            </div>
+                            {isTripCompleted && (
+                                <div className="flex justify-between font-bold text-green-700 pt-2 border-t border-gray-200">
+                                    <span>Distance Run:</span>
+                                    <span>{trip.kmRun || 'N/A'} km</span>
+                                </div>
+                            )}
+                            {trip.status === 'broken-down' && (
+                                <div className="pt-2 border-t border-gray-200">
+                                    <span className="font-semibold text-yellow-700 block mb-1">Breakdown Report:</span>
+                                    <p className='text-xs text-gray-600'>**Reason:** {trip.breakdownReason || 'N/A'}</p>
+                                    <p className='text-xs text-gray-600'>**Location:** {trip.breakdownLocation || 'N/A'}</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Standardized Action Buttons */}
+                        <div className="space-y-3">
+                            {/* 1. Report Police Fine Button (Primary Action) */}
+                            <button 
+                                onClick={() => setShowFineClaimModal(true)} 
+                                className="w-full py-3 bg-red-600 text-white rounded-xl flex justify-center gap-2 items-center hover:bg-red-700 transition-all font-semibold shadow-md"
+                            >
+                                <Banknote className="w-5 h-5"/> Report Police Fine Claim
+                            </button>
+                            
+                            {/* 2. Back to Dashboard Button (Secondary Action) */}
+                            <button onClick={handleCompleteSummary} className="w-full py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-semibold shadow-md flex justify-center gap-2 items-center">
+                                <ArrowLeft className="w-5 h-5"/> Finish & Go to Dashboard
+                            </button>
+                        </div>
                     </Card>
                 )}
                 
-                {/* --- MODALS (Standardized Layout and Form Elements) --- */}
+                {/* --- MODALS --- */}
 
-                {/* Police Fine Claim Modal (Retained) */}
+                {/* Police Fine Claim Modal */}
                 {showFineClaimModal && (
                     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
                         <Card className="w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
@@ -678,25 +708,27 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                                 <h3 className="text-2xl font-bold flex items-center gap-2 text-red-700">
                                     <Banknote className="w-6 h-6"/> Report Police Fine Claim
                                 </h3>
-                                <button onClick={() => setShowFineClaimModal(false)} className="text-gray-500 hover:text-red-700 p-1"><X className="w-6 h-6"/></button>
+                                <button onClick={() => setShowFineClaimModal(false)} className="text-gray-500 hover:text-red-700 p-1 rounded-full hover:bg-red-50"><X className="w-6 h-6"/></button>
                             </div>
                             
                             <div className="bg-red-50 p-3 rounded-lg text-sm my-4 space-y-1 border border-red-200">
                                 <p><strong>Trip:</strong> #{trip.serialNumber || trip.id.slice(0, 8)} | **Vehicle:** {trip.vehicleNumber}</p>
                                 <p><strong>Driver:</strong> {user.fullName || user.name}</p>
+                                <p className='text-xs font-medium mt-1 text-red-600'>Submit this form *only* if you received a fine during this completed trip.</p>
                             </div>
 
                             <div className="space-y-4">
                                 {/* Date of Fine */}
-                                <div><label className="text-sm font-medium block mb-1">Date Fine Occurred <span className="text-red-500">*</span></label><input type="date" value={fineClaimData.fineDate} onChange={e => setFineClaimData({...fineClaimData, fineDate: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" required /></div>
+                                <div><label className="text-sm font-medium block mb-1">Date Fine Occurred <span className="text-red-500">*</span></label><input type="date" value={fineClaimData.fineDate} onChange={e => setFineClaimData({...fineClaimData, fineDate: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" required /></div>
                                 {/* Police Station/Place */}
-                                <div><label className="text-sm font-medium block mb-1">Police Station/Place <span className="text-red-500">*</span></label><input type="text" value={fineClaimData.policeStationPlace} onChange={e => setFineClaimData({...fineClaimData, policeStationPlace: e.target.value})} placeholder="E.g., Colombo Central Police" className="w-full p-2.5 border border-gray-300 rounded-lg" required /></div>
-                                {/* Fine Amount */}
-                                <div><label className="text-sm font-medium block mb-1">Fine Amount (LKR) <span className="text-red-500">*</span></label><input type="number" value={fineClaimData.amount} onChange={e => setFineClaimData({...fineClaimData, amount: e.target.value})} placeholder="E.g. 5000" className="w-full p-2.5 border border-gray-300 rounded-lg" required /></div>
-                                {/* Reason for Fine (Brief) */}
-                                <div><label className="text-sm font-medium block mb-1">Reason for the Fine (Brief) <span className="text-red-500">*</span></label><input type="text" value={fineClaimData.reason} onChange={e => setFineClaimData({...fineClaimData, reason: e.target.value})} placeholder="E.g., Speeding violation" className="w-full p-2.5 border border-gray-300 rounded-lg" required /></div>
+                                <div><label className="text-sm font-medium block mb-1">Police Station/Place <span className="text-red-500">*</span></label><input type="text" value={fineClaimData.policeStationPlace} onChange={e => setFineClaimData({...fineClaimData, policeStationPlace: e.target.value})} placeholder="E.g., Colombo Central Police" className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" required /></div>
+                                {/* Fine Amount and Reason (Side-by-side on larger screens) */}
+                                <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                                    <div><label className="text-sm font-medium block mb-1">Fine Amount (LKR) <span className="text-red-500">*</span></label><input type="number" value={fineClaimData.amount} onChange={e => setFineClaimData({...fineClaimData, amount: e.target.value})} placeholder="E.g. 5000" className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" required /></div>
+                                    <div><label className="text-sm font-medium block mb-1">Reason (Brief) <span className="text-red-500">*</span></label><input type="text" value={fineClaimData.reason} onChange={e => setFineClaimData({...fineClaimData, reason: e.target.value})} placeholder="E.g., Speeding violation" className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" required /></div>
+                                </div>
                                 {/* Details/Description */}
-                                <div><label className="text-sm font-medium block mb-1">Fine Details/Description</label><textarea value={fineClaimData.fineDescription} onChange={e => setFineClaimData({...fineClaimData, fineDescription: e.target.value})} placeholder="Detailed description of the incident" rows={2} className="w-full p-2.5 border border-gray-300 rounded-lg" /></div>
+                                <div><label className="text-sm font-medium block mb-1">Fine Details/Description</label><textarea value={fineClaimData.fineDescription} onChange={e => setFineClaimData({...fineClaimData, fineDescription: e.target.value})} placeholder="Detailed description of the incident" rows={2} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500" /></div>
                                 {/* Fine Ticket Photo Upload */}
                                 <div>
                                     <label className="text-sm font-medium block mb-1">Upload Fine Ticket Photo (URL)</label>
@@ -709,13 +741,14 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                                 </div>
                             </div>
                             <div className="flex gap-3 mt-6">
-                                <button onClick={() => setShowFineClaimModal(false)} className="flex-1 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors">Cancel</button>
+                                {/* Added Cancel/No Fine button here */}
+                                <button onClick={() => setShowFineClaimModal(false)} className="flex-1 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors">Cancel / No Fine</button>
                                 <button 
                                     onClick={handleReportFine} 
                                     disabled={!fineClaimData.policeStationPlace || !fineClaimData.amount || !fineClaimData.reason || !fineClaimData.fineDate}
-                                    className="flex-1 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 font-semibold"
+                                    className="flex-1 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 font-semibold flex justify-center items-center gap-2"
                                 >
-                                    Submit Fine Claim
+                                    <Banknote className="w-5 h-5"/> Submit Fine Claim
                                 </button>
                             </div>
                         </Card>
@@ -725,16 +758,16 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                 {/* Breakdown Reporting Modal */}
                 {showBreakdownModal && (
                     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-                        <Card className="w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto"> {/* Added max-height and overflow */}
+                        <Card className="w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
                             <div className="flex justify-between items-center pb-4 border-b">
                                 <h3 className="text-2xl font-bold flex items-center gap-2 text-yellow-700">
                                     <Wrench className="w-6 h-6"/> Report Vehicle Breakdown
-                                </h3>
-                                <button onClick={() => setShowBreakdownModal(false)} className="text-gray-500 hover:text-yellow-700 p-1"><X className="w-6 h-6"/></button>
+                                </h3> 
+                                <button onClick={() => setShowBreakdownModal(false)} className="text-gray-500 hover:text-yellow-700 p-1 rounded-full hover:bg-yellow-50"><X className="w-6 h-6"/></button>
                             </div>
                             
                             <p className="my-4 text-sm text-gray-700 bg-yellow-50 border-l-4 border-yellow-400 p-3 rounded">
-                                This action will immediately **halt the trip** and notify the administrator for vehicle replacement.
+                                This action will immediately **halt the trip**, mark the **vehicle for maintenance**, and notify the administrator for vehicle replacement.
                             </p>
                             
                             <div className='space-y-4'>
@@ -747,8 +780,8 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                                         type="number" 
                                         value={breakdownOdometer} 
                                         onChange={e => setBreakdownOdometer(e.target.value)} 
-                                        placeholder="Current Mileage"
-                                        className='w-full p-2.5 border border-gray-300 rounded-lg text-base'
+                                        placeholder={`Enter current mileage (must be > ${trip.odometerStart || 0} km)`}
+                                        className='w-full p-2.5 border border-gray-300 rounded-lg text-base focus:ring-yellow-500 focus:border-yellow-500'
                                     />
                                 </div>
 
@@ -758,13 +791,13 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                                         Last Place Visited/Nearest Stop: <span className="text-red-500">*</span>
                                     </label>
                                     <select 
-                                        className="w-full p-2.5 border border-gray-300 rounded-lg text-base appearance-none bg-white" 
+                                        className="w-full p-2.5 border border-gray-300 rounded-lg text-base appearance-none bg-white focus:ring-yellow-500 focus:border-yellow-500" 
                                         value={lastVisitedStop} 
                                         onChange={e => setLastVisitedStop(e.target.value)}
                                     >
                                         <option value="">Select Last Stop Reached (or nearest in route)</option>
                                         {allTripStops.map((stop, index) => (
-                                            <option key={index} value={stop}>{stop} ({index === 0 ? 'Start/Pickup' : index === allTripStops.length - 1 ? 'Final Drop-off' : `Stop ${index}`})</option>
+                                            <option key={index} value={stop}>{stop} ({index === 0 ? 'Start/Pickup' : index === allTripStops.length - 1 ? 'Final Drop-off' : `Stop ${index + 1}`})</option>
                                         ))}
                                     </select>
                                 </div>
@@ -775,7 +808,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                                     <div className="flex gap-2 w-full items-center">
                                         <input
                                             type="text"
-                                            className="flex-1 w-full p-2.5 border border-gray-300 rounded-lg text-base outline-none" 
+                                            className="flex-1 w-full p-2.5 border border-gray-300 rounded-lg text-base outline-none focus:ring-yellow-500 focus:border-yellow-500" 
                                             value={breakdownAddress}
                                             onChange={(e) => handleLocationSearch(e.target.value)}
                                             placeholder="Enter nearest address or search"
@@ -809,7 +842,7 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                                         Reason for Breakdown: <span className="text-red-500">*</span>
                                     </label>
                                     <select 
-                                        className="w-full p-2.5 border border-gray-300 rounded-lg text-base appearance-none bg-white" 
+                                        className="w-full p-2.5 border border-gray-300 rounded-lg text-base appearance-none bg-white focus:ring-yellow-500 focus:border-yellow-500" 
                                         value={breakdownReason} 
                                         onChange={e => setBreakdownReason(e.target.value)}
                                     >
@@ -835,16 +868,16 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                                 <button 
                                     onClick={handleReportBreakdown} 
                                     disabled={!breakdownReason || !driverLocation || !breakdownOdometer || !lastVisitedStop || !breakdownAddress} 
-                                    className="flex-1 py-3 bg-yellow-600 text-white rounded-xl hover:bg-yellow-700 disabled:opacity-50 font-semibold"
+                                    className="flex-1 py-3 bg-yellow-600 text-white rounded-xl hover:bg-yellow-700 disabled:opacity-50 font-semibold flex justify-center items-center gap-2"
                                 >
-                                    Confirm Breakdown
+                                    <Wrench className="w-5 h-5"/> Confirm Breakdown
                                 </button>
                             </div>
                         </Card>
                     </div>
                 )}
                 
-                {/* ODOMETER INPUT MODAL (Retained) */}
+                {/* ODOMETER INPUT MODAL */}
                 {showOdometerModal && (
                     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
                         <Card className="w-full max-w-md p-6">
@@ -852,33 +885,42 @@ export function DriverTripDetail({ user, tripId, onNavigate, onLogout }: DriverT
                                 <h3 className="text-2xl font-bold flex items-center gap-2 text-blue-600">
                                     <Gauge className='w-6 h-6'/> {modalActionType === 'start' ? 'Start Trip Odometer' : 'End Trip Odometer'}
                                 </h3>
-                                <button onClick={() => setShowOdometerModal(false)} className="text-gray-500 hover:text-blue-700 p-1"><X className="w-6 h-6"/></button>
+                                <button onClick={() => setShowOdometerModal(false)} className="text-gray-500 hover:text-blue-700 p-1 rounded-full hover:bg-blue-50"><X className="w-6 h-6"/></button>
                             </div>
                             <p className='text-sm text-gray-600 my-4'>
                                 Please enter the vehicle's current mileage reading (in km).
-                                {modalActionType === 'end' && trip.odometerStart && (
-                                    <span className='block mt-1 font-medium text-gray-800'>
-                                        **Start Odo:** {trip.odometerStart} km
-                                    </span>
-                                )}
                             </p>
+                            {modalActionType === 'end' && trip.odometerStart && (
+                                <div className='bg-blue-50 border border-blue-200 p-3 rounded-lg mb-4 text-sm'>
+                                    <p className='font-semibold text-gray-800'>
+                                        **Trip Start Odometer:** <span className='text-blue-700'>{trip.odometerStart} km</span>
+                                    </p>
+                                </div>
+                            )}
+                            {modalActionType === 'start' && trip.odometerEndPrevious && (
+                                <div className='bg-yellow-50 border border-yellow-200 p-3 rounded-lg mb-4 text-sm'>
+                                    <p className='font-semibold text-gray-800'>
+                                        **Last Recorded End Odometer:** <span className='text-yellow-700'>{trip.odometerEndPrevious} km</span>
+                                    </p>
+                                </div>
+                            )}
                             
                             <input 
                                 type='number'
                                 value={odometerInput}
                                 onChange={e => setOdometerInput(e.target.value)}
                                 placeholder='Enter mileage (km)'
-                                className='w-full p-3 border border-gray-300 rounded-xl text-lg mb-6 focus:ring-blue-500 focus:border-blue-500'
+                                className='w-full p-3 border border-gray-300 rounded-xl text-lg mb-6 focus:ring-blue-500 focus:border-blue-500 font-mono'
                             />
                             
                             <div className="flex gap-3">
                                 <button onClick={() => setShowOdometerModal(false)} className="flex-1 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors">Cancel</button>
                                 <button 
                                     onClick={handleSubmitOdometer} 
-                                    disabled={!odometerInput || (modalActionType === 'end' && Number(odometerInput) <= (trip.odometerStart || 0))} 
-                                    className="flex-1 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 disabled:opacity-50 font-semibold"
+                                    disabled={!odometerInput || (modalActionType === 'end' && Number(odometerInput) <= (trip.odometerStart || 0)) || (modalActionType === 'start' && Number(odometerInput) <= (trip.odometerEndPrevious || 0) && trip.odometerEndPrevious > 0)} 
+                                    className="flex-1 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 disabled:opacity-50 font-semibold flex justify-center items-center gap-2"
                                 >
-                                    {modalActionType === 'start' ? 'Confirm Start' : 'Confirm End'}
+                                    <CheckCircle className='w-5 h-5'/> {modalActionType === 'start' ? 'Confirm Start' : 'Confirm End'}
                                 </button>
                             </div>
                         </Card>

@@ -13,13 +13,24 @@ import { logAction } from '../../utils/auditLogger';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-// --- LICENSE TYPE DEFINITIONS for VEHICLES ---
-// Vehicles only require A, B, or C. They cannot require "D" (Combination/All).
+// --- CONSTANTS ---
 const LICENSE_TYPES_VEHICLE = {
     'A': 'Motorcycle (A)',
     'B': 'Light Vehicle (B)',
     'C': 'Heavy Motor Vehicle (C)',
 };
+
+// Placeholder list for plants/locations (Customize this list)
+const PLANT_LOCATIONS = [
+    'Veyangoda (Head Office)',
+    'Katunayake Factory',
+    'Horana Plant',
+    'Trincomalee Branch',
+    'Pallekele',
+    'Negombo (Kadirana)',
+    'Koggala',
+    'Unassigned'
+];
 
 interface VehicleManagementProps {
     user: User;
@@ -34,7 +45,7 @@ const loadBase64Image = async (url: string): Promise<{ data: string; width: numb
         if (!response.ok) throw new Error("Image not found or network error.");
         
         const blob = await response.blob();
-        const type = url.endsWith('.png') ? 'PNG' : 'JPEG'; 
+        const type = url.endsWith('.png') ? 'PNG' : 'JPEG';
         
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -93,7 +104,8 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     const [formData, setFormData] = useState({
         number: '', model: '', type: 'Car', seats: '', rate: '', serviceInterval: '5000',
         licenseExpiry: '', insuranceExpiry: '', ownerName: '', ownerPhone: '', chassisNumber: '', engineNumber: '',
-        requiredLicenseType: 'B' // Default to Light Vehicle
+        requiredLicenseType: 'B', // Default to Light Vehicle
+        plant: PLANT_LOCATIONS[0] || 'Unassigned' // 🌟 NEW PLANT FIELD 🌟
     });
 
     const [newRate, setNewRate] = useState(''); // Rate Update State
@@ -133,12 +145,11 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         license: true,
     });
     
-    // 2. Helper: Check if a trip is active today (in-progress or starting today)
+    // 2. Helper: Check if a trip is active today (in-progress or starting today) (Retained)
     const isTodayOrInProgress = (trip: any) => {
         if (trip.status === 'in-progress') return true;
         
         if (['approved', 'reassigned', 'approved_merge_request'].includes(trip.status)) { 
-            // Check if the trip is an approved/reassigned trip scheduled for today
             const tripDate = new Date(trip.date).setHours(0, 0, 0, 0);
             const today = new Date().setHours(0, 0, 0, 0);
             return tripDate === today;
@@ -146,7 +157,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         return false;
     };
     
-    // 2. Helper: Calculate Stats & Determine EFFECTIVE STATUS (FIXED LOGIC)
+    // 2. Helper: Calculate Stats & Determine EFFECTIVE STATUS (Retained)
     const getVehicleStats = (vehicle: any, allTrips: any[]) => {
         // --- Mileage Calculation ---
         const vehicleTrips = allTrips.filter(t => (t.vehicleId === vehicle.id || t.vehicleNumber === vehicle.number) && 
@@ -191,10 +202,9 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         const isServiceCritical = remainingKm <= 500;
         const isCriticalRisk = isServiceCritical || licenseStatus !== 'valid';
 
-        // --- EFFECTIVE STATUS OVERRIDE (Simplified logic) ---
+        // --- EFFECTIVE STATUS OVERRIDE ---
         const relevantTripsForStatus = allTrips.filter(t => !['completed', 'cancelled', 'rejected', 'broken-down'].includes(t.status));
 
-        // 1. Check if there is a trip currently active or starting today for this assigned vehicle
         const isVehicleInActiveTrip = relevantTripsForStatus.some(t => 
             (t.vehicleId === vehicle.id || t.vehicleNumber === vehicle.number) && 
             isTodayOrInProgress(t)
@@ -203,11 +213,10 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         let effectiveStatus = 'available'; // Default to Available
 
         if (vehicle.status === 'in-maintenance') {
-            effectiveStatus = 'in-maintenance'; // Maintenance overrides all
+            effectiveStatus = 'in-maintenance'; 
         } else if (isVehicleInActiveTrip) {
-            effectiveStatus = 'in-use'; // Actively doing a trip today
-        } else if (vehicle.status === 'assigned' || vehicle.status === 'available') {
-             // If explicitly assigned (in Firestore) or default available, and no active trip today, show Available.
+            effectiveStatus = 'in-use'; 
+        } else if (vehicle.status === 'assigned' || vehicle.status === 'available') { 
             effectiveStatus = 'available'; 
         }
         
@@ -217,7 +226,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     };
 
 
-    // 1. Real-Time Fetch
+    // 1. Real-Time Fetch (Retained)
     useEffect(() => {
         setLoading(true);
         
@@ -231,14 +240,12 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         let latestTrips: any[] = [];
 
         const recalculateStatus = () => {
-            // Recalculate stats for rendering and alerts, passing the latest trip data
             const vehiclesWithStats = latestVehicles.map(v => ({ ...v, stats: getVehicleStats(v, latestTrips) }));
             
             // Spread stats onto vehicle object and use the calculated displayStatus
             const vehiclesForState = vehiclesWithStats.map(v => ({ 
                 ...v, 
                 ...v.stats,
-                // Overwrite the original Firestore vehicle status for display only
                 status: v.stats.displayStatus 
             }));
             
@@ -260,9 +267,9 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         const unsubVehicles = onSnapshot(collection(db, "vehicles"), (snapshot) => {
             latestVehicles = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             if (latestTrips.length > 0) {
-                 recalculateStatus();
+                recalculateStatus();
             } else {
-                 setVehicles(latestVehicles);
+                setVehicles(latestVehicles);
             }
         });
         unsubscribers.push(unsubVehicles);
@@ -286,7 +293,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     }, []);
     
 
-    // 3. Image Header Function for PDF (Retained, fixed to use cached data)
+    // 3. Image Header Function for PDF (Retained)
     const addHeader = (doc: jsPDF, imageData: typeof headerImageData) => {
         const pageWidth = doc.internal.pageSize.width;
         const fixedWidth = 180; 
@@ -311,7 +318,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         }
     };
 
-    // NEW: Image Footer Function for PDF (Retained, fixed to use cached data)
+    // NEW: Image Footer Function for PDF (Retained)
     const addFooter = (doc: jsPDF, imageData: typeof footerImageData) => {
         const pageWidth = doc.internal.pageSize.width;
         const pageHeight = doc.internal.pageSize.height;
@@ -335,7 +342,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     // 4. Actions & Handlers
     
     // --- Fuel Log Logic (Retained) ---
-    const openFuelLogModal = (vehicle: any) => {
+    const openFuelLogModal = (vehicle: any) => { /* ... (Logic retained) ... */
         setSelectedVehicle(vehicle);
         setFuelData({
             date: new Date().toISOString().split('T')[0],
@@ -347,7 +354,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         setShowFuelLogModal(true);
     };
     
-    const handleLogFuel = async () => {
+    const handleLogFuel = async () => { /* ... (Logic retained) ... */
         if (!selectedVehicle || !fuelData.odometer || !fuelData.liters || !fuelData.cost) {
             alert('Please fill in Odometer, Liters, and Cost.');
             return;
@@ -386,7 +393,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     };
 
     // --- Core Action: Force Set Vehicle to Available (Retained) ---
-    const handleForceAvailable = async (vehicle: any) => {
+    const handleForceAvailable = async (vehicle: any) => { /* ... (Logic retained) ... */
         if (vehicle.status === 'in-use') {
             alert("Vehicle is currently IN USE (on an active trip today). Cannot be set to available.");
             return;
@@ -416,13 +423,14 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     };
 
 
-    // --- Vehicle CRUD (Retained) ---
+    // --- Vehicle CRUD ---
     const openAddModal = () => {
         setIsEditing(false);
         setFormData({ 
             number: '', model: '', type: 'Car', seats: '', rate: '', serviceInterval: '5000',
             licenseExpiry: '', insuranceExpiry: '', ownerName: '', ownerPhone: '', chassisNumber: '', engineNumber: '',
-            requiredLicenseType: 'B' 
+            requiredLicenseType: 'B',
+            plant: PLANT_LOCATIONS[0] || 'Unassigned' // 🌟 NEW DEFAULT 🌟
         });
         setShowAddModal(true);
     };
@@ -444,7 +452,8 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
             ownerPhone: vehicle.ownerPhone || '',
             chassisNumber: vehicle.chassisNumber || '',
             engineNumber: vehicle.engineNumber || '',
-            requiredLicenseType: vehicle.requiredLicenseType || 'B' 
+            requiredLicenseType: vehicle.requiredLicenseType || 'B',
+            plant: vehicle.plant || PLANT_LOCATIONS[0] || 'Unassigned' // 🌟 NEW LOAD VALUE 🌟
         });
         setShowAddModal(true);
     };
@@ -463,13 +472,14 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                 insuranceExpiry: formData.insuranceExpiry,
                 ownerName: formData.ownerName,
                 ownerPhone: formData.ownerPhone,
-                requiredLicenseType: formData.requiredLicenseType, 
+                requiredLicenseType: formData.requiredLicenseType,
+                plant: formData.plant, // 🌟 SAVE PLANT FIELD 🌟
                 ...(isEditing ? {} : { chassisNumber: formData.chassisNumber, engineNumber: formData.engineNumber })
             };
 
             if (isEditing && selectedVehicleId) {
                 await updateDoc(doc(db, "vehicles", selectedVehicleId), data);
-                await logAction(user.email, 'VEHICLE_UPDATE', `Updated vehicle ${formData.number} (Req Lic: ${formData.requiredLicenseType})`, { targetId: selectedVehicleId });
+                await logAction(user.email, 'VEHICLE_UPDATE', `Updated vehicle ${formData.number} (Plant: ${formData.plant})`, { targetId: selectedVehicleId });
                 alert('Vehicle updated!');
             } else {
                 const initialLog = { rate: parseFloat(formData.rate.toString()), changedBy: `${user.name} (Admin)`, date: new Date().toISOString(), previousRate: 0 };
@@ -483,14 +493,14 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                     repairs: [], services: [], rateHistory: [initialLog], licenseHistory: [], fuelHistory: [],
                     createdAt: new Date().toISOString()
                 });
-                await logAction(user.email, 'VEHICLE_ADD', `Added vehicle ${formData.number} (Req Lic: ${formData.requiredLicenseType})`, { targetId: newDocRef.id });
+                await logAction(user.email, 'VEHICLE_ADD', `Added vehicle ${formData.number} (Plant: ${formData.plant})`, { targetId: newDocRef.id });
                 alert('Vehicle added!');
             }
             setShowAddModal(false);
         } catch (error) { console.error(error); }
     };
     
-    const handleDelete = async (id: string) => {
+    const handleDelete = async (id: string) => { /* ... (Logic retained) ... */
         const vehicle = vehicles.find(v => v.id === id);
         if (confirm(`Are you sure you want to delete vehicle ${vehicle?.number}?`)) {
             try { 
@@ -501,7 +511,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     };
     
     // --- Rate Logic (Retained) ---
-    const handleUpdateRate = async () => {
+    const handleUpdateRate = async () => { /* ... (Logic retained) ... */
         if (!selectedVehicle || !newRate) return;
         try {
             const rateVal = parseFloat(newRate);
@@ -524,7 +534,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     };
     
     // --- Repair Logic (Retained) ---
-    const handleStartRepair = async () => {
+    const handleStartRepair = async () => { /* ... (Logic retained) ... */
         if (!selectedVehicle || !repairStartData.issue) return;
         try {
             const vehicleRef = doc(db, "vehicles", selectedVehicle.id);
@@ -548,7 +558,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         } catch (error) { console.error(error); }
     };
 
-    const handleFinishRepair = async () => {
+    const handleFinishRepair = async () => { /* ... (Logic retained) ... */
         if (!selectedVehicle) return;
         try {
             const vehicleRef = doc(db, "vehicles", selectedVehicle.id);
@@ -585,7 +595,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     };
 
     // --- Service Logic (Retained) ---
-    const handleLogService = async () => {
+    const handleLogService = async () => { /* ... (Logic retained) ... */
         if (!selectedVehicle) return;
         
         const mileage = parseFloat(serviceData.mileage);
@@ -621,7 +631,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
     };
 
     // --- License Logic (Retained) ---
-    const handleRenewLicense = async () => {
+    const handleRenewLicense = async () => { /* ... (Logic retained) ... */
         if(!selectedVehicle) return;
         try {
             const vehicleRef = doc(db, "vehicles", selectedVehicle.id); 
@@ -644,7 +654,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         } catch(e) { console.error(e); alert("Failed to update license."); }
     };
 
-    const openLicenseModal = (vehicle: any) => {
+    const openLicenseModal = (vehicle: any) => { /* ... (Logic retained) ... */
         setSelectedVehicle(vehicle);
         setLicenseData({
             renewalDate: new Date().toISOString().split('T')[0],
@@ -659,8 +669,8 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         setShowLicenseModal(true);
     };
 
-    // --- Reports (Fixed to use cached image data for robustness) ---
-    const generateVehiclePass = async (v: any) => { 
+    // --- Reports (Retained) ---
+    const generateVehiclePass = async (v: any) => { /* ... (Logic retained) ... */
         try {
             const doc = new jsPDF();
             const marginX = 14; 
@@ -696,6 +706,8 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
             doc.text(`Current License Exp: ${v.licenseExpiry || 'N/A'}`, marginX, y);
             y += 7;
             doc.text(`Current Insurance Exp: ${v.insuranceExpiry || 'N/A'}`, marginX, y);
+            y += 7; // 🌟 NEW: ADD PLANT LOCATION 🌟
+            doc.text(`Registered Plant: ${v.plant || 'N/A'}`, marginX, y);
             y += 10;
 
             doc.setFontSize(16);
@@ -708,6 +720,8 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
             doc.text("This pass authorizes the vehicle listed above for official company travel.", marginX, y);
             y += 5;
             doc.text("Issued by Transport Management.", marginX, y);
+            y += 5;
+            doc.text(`Plant of Registration: ${v.plant || 'N/A'}`, marginX, y); // 🌟 ADD PLANT LOCATION 🌟
             
             doc.save(`Pass_${v.number}_${today}.pdf`);
         } catch (error) {
@@ -716,8 +730,8 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
         }
     };
     
-    // --- GENERATE REPORT (Fixed to use cached image data for robustness) ---
-    const generateReport = async (v: any, selectedSections?: ('repair' | 'service' | 'fuel' | 'license')[] | undefined) => {
+    // --- GENERATE REPORT (Retained) ---
+    const generateReport = async (v: any, selectedSections?: ('repair' | 'service' | 'fuel' | 'license')[] | undefined) => { /* ... (Logic retained) ... */
         const doc = new jsPDF();
         
         const marginX = 14; 
@@ -764,6 +778,8 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
             doc.text(`Current License Exp: ${v.licenseExpiry || 'N/A'}`, marginX, startY);
             startY += 5;
             doc.text(`Current Insurance Exp: ${v.insuranceExpiry || 'N/A'}`, marginX, startY);
+            startY += 5; // 🌟 NEW: ADD PLANT LOCATION 🌟
+            doc.text(`Registered Plant: ${v.plant || 'N/A'}`, marginX, startY);
             startY += 8;
             
             doc.setFontSize(12);
@@ -1012,7 +1028,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                 )}
                 {/* 🚨 END ALERT SECTIONS */}
 
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"> 
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"> 
                     {vehicles.map((vehicle) => {
                         const stats = getVehicleStats(vehicle, trips);
                         const percentage = Math.min((stats.kmSinceService / stats.serviceInterval) * 100, 100);
@@ -1042,7 +1058,10 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                                                 <Car className="w-6 h-6" />
                                             </div>
                                             <div className='flex-1'>
-                                                <div className="flex items-center gap-2"><h3 className="text-lg font-bold">{vehicle.number}</h3><Badge status={displayStatus} size="sm" /></div>
+                                                <div className="flex items-center gap-2">
+                                                    <h3 className="text-lg font-bold">{vehicle.number}</h3>
+                                                    <Badge status={displayStatus} size="sm" />
+                                                </div>
                                                 <div className="text-sm text-gray-500">{vehicle.model} • {vehicle.type}</div>
                                                 <div className="text-sm text-green-600 font-bold">LKR {vehicle.ratePerKm}/km</div>
                                             </div>
@@ -1050,6 +1069,9 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
 
                                         {/* License & Service Health */}
                                         <div className="w-full pt-1">
+                                            <div className="text-sm text-gray-500 mb-1">
+                                                Plant: <span className="font-semibold text-gray-700">{vehicle.plant || 'N/A'}</span>
+                                            </div>
                                             <div className={`text-xs font-medium ${stats.licenseStatus !== 'valid' ? 'text-red-600' : 'text-gray-400'} mb-1`}>
                                                 Lic. Exp: {vehicle.licenseExpiry || 'N/A'} (Req: {vehicle.requiredLicenseType || 'N/A'})
                                             </div>
@@ -1064,11 +1086,10 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                                     {/* Action Buttons (Middle/Bottom) */}
                                     <div className="flex flex-col w-full pt-4 border-t border-gray-100 mt-auto">
                                         
-                                        {/* 💥 NEW ACTION BUTTON: Force Available (Visible if NOT available and NOT unavailable) 💥 */}
+                                        {/* 💥 NEW ACTION BUTTON: Force Available 💥 */}
                                         {displayStatus !== 'available' && (
                                             <button
                                                 onClick={() => handleForceAvailable(vehicle)}
-                                                // Only enable if the Firestore status is NOT maintenance or in-use
                                                 disabled={isUnavailable}
                                                 className={`w-full mb-3 flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-xl transition-colors ${
                                                     isUnavailable 
@@ -1081,7 +1102,6 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                                             </button>
                                         )}
                                         
-
                                         {/* Maintenance/Rate/Report Quick Icons */}
                                         <div className="flex gap-2 flex-wrap mb-2">
                                             <button onClick={() => openFuelLogModal(vehicle)} className="p-2 bg-yellow-50 text-yellow-600 rounded-lg hover:bg-yellow-100" title="Log Fuel"><Fuel className="w-5 h-5" /></button>
@@ -1115,7 +1135,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                 </div>
             </div>
 
-            {/* MODALS SECTION (Retained) */}
+            {/* MODALS SECTION */}
             
             {showRateModal && selectedVehicle && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1308,91 +1328,99 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                 </div>
             )}
 
-            {/* Add/Edit Vehicle Modal (Retained) */}
+            {/* Add/Edit Vehicle Modal (FIXED) */}
             {showAddModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                   <Card className="w-full max-w-2xl p-6 max-h-[90vh] flex flex-col">
+                    <Card className="w-full max-w-2xl p-6 max-h-[90vh] flex flex-col">
                     <h3 className="text-xl mb-4 font-bold flex-shrink-0">{isEditing ? 'Edit Vehicle' : 'Add Vehicle'}</h3>
                     
                     <div className="overflow-y-auto flex-1 pr-2">
-                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="col-span-2"><h4 className="text-sm font-bold text-gray-500 border-b pb-1 mb-2">Basic Info</h4></div>
                             
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Vehicle Number</label>
-                               <input className="w-full p-2 border rounded" value={formData.number} onChange={e => setFormData({...formData, number: e.target.value})} placeholder="CAB-1234" />
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Vehicle Number</label>
+                                <input className="w-full p-2 border rounded" value={formData.number} onChange={e => setFormData({...formData, number: e.target.value})} placeholder="CAB-1234" />
                             </div>
 
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Model</label>
-                               <input className="w-full p-2 border rounded" value={formData.model} onChange={e => setFormData({...formData, model: e.target.value})} placeholder="Toyota Prius" />
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Model</label>
+                                <input className="w-full p-2 border rounded" value={formData.model} onChange={e => setFormData({...formData, model: e.target.value})} placeholder="Toyota Prius" />
                             </div>
 
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Type</label>
-                               <select className="w-full p-2 border rounded" value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})}>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Type</label>
+                                <select className="w-full p-2 border rounded" value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})}>
                                     {['Car', 'Van', 'Bike', 'Bus', 'Lorry', 'Jeep', 'Three Wheeler'].map(t => <option key={t} value={t}>{t}</option>)}
-                               </select>
+                                </select>
                             </div>
-                            
-                            {/* Required License Type */}
+
+                            {/* 🌟 NEW PLANT LOCATION FIELD 🌟 */}
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Required License (Type)</label>
-                               <select className="w-full p-2 border rounded" value={formData.requiredLicenseType} onChange={e => setFormData({...formData, requiredLicenseType: e.target.value})}>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Registered Plant/Location</label>
+                                <select className="w-full p-2 border rounded" value={formData.plant} onChange={e => setFormData({...formData, plant: e.target.value})}>
+                                    {PLANT_LOCATIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                                </select>
+                            </div>
+                            {/* 🌟 END NEW FIELD 🌟 */}
+
+                            <div>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Required License (Type)</label>
+                                <select className="w-full p-2 border rounded" value={formData.requiredLicenseType} onChange={e => setFormData({...formData, requiredLicenseType: e.target.value})}>
                                     {Object.entries(LICENSE_TYPES_VEHICLE).map(([code, name]) => (
                                         <option key={code} value={code}>{code} - {name}</option>
                                     ))}
-                               </select>
+                                </select>
                             </div>
 
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Seats</label>
-                               <input type="number" className="w-full p-2 border rounded" value={formData.seats} onChange={e => setFormData({...formData, seats: e.target.value})} />
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Seats</label>
+                                <input type="number" className="w-full p-2 border rounded" value={formData.seats} onChange={e => setFormData({...formData, seats: e.target.value})} />
                             </div>
                             
                             <div className="col-span-2 mt-2"><h4 className="text-sm font-bold text-gray-500 border-b pb-1 mb-2">Technical (Locked after create)</h4></div>
                             
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Chassis Number</label>
-                               <input className="w-full p-2 border rounded bg-gray-50" value={formData.chassisNumber} onChange={e => setFormData({...formData, chassisNumber: e.target.value})} disabled={isEditing} placeholder="Chassis No." />
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Chassis Number</label>
+                                <input className="w-full p-2 border rounded bg-gray-50" value={formData.chassisNumber} onChange={e => setFormData({...formData, chassisNumber: e.target.value})} disabled={isEditing} placeholder="Chassis No." />
                             </div>
 
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Engine Number</label>
-                               <input className="w-full p-2 border rounded bg-gray-50" value={formData.engineNumber} onChange={e => setFormData({...formData, engineNumber: e.target.value})} disabled={isEditing} placeholder="Engine No." />
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Engine Number</label>
+                                <input className="w-full p-2 border rounded bg-gray-50" value={formData.engineNumber} onChange={e => setFormData({...formData, engineNumber: e.target.value})} disabled={isEditing} placeholder="Engine No." />
                             </div>
 
                             <div className="col-span-2 mt-2"><h4 className="text-sm font-bold text-gray-500 border-b pb-1 mb-2">License & Ownership</h4></div>
                             
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Owner Name</label>
-                               <input className="w-full p-2 border rounded" value={formData.ownerName} onChange={e => setFormData({...formData, ownerName: e.target.value})} />
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Owner Name</label>
+                                <input className="w-full p-2 border rounded" value={formData.ownerName} onChange={e => setFormData({...formData, ownerName: e.target.value})} />
                             </div>
 
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Owner Phone</label>
-                               <input className="w-full p-2 border rounded" value={formData.ownerPhone} onChange={e => setFormData({...formData, ownerPhone: e.target.value})} />
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Owner Phone</label>
+                                <input className="w-full p-2 border rounded" value={formData.ownerPhone} onChange={e => setFormData({...formData, ownerPhone: e.target.value})} />
                             </div>
 
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">License Expiry</label>
-                               <input type="date" className="w-full p-2 border rounded" value={formData.licenseExpiry} onChange={e => setFormData({...formData, licenseExpiry: e.target.value})} />
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">License Expiry</label>
+                                <input type="date" className="w-full p-2 border rounded" value={formData.licenseExpiry} onChange={e => setFormData({...formData, licenseExpiry: e.target.value})} />
                             </div>
 
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Insurance Expiry</label>
-                               <input type="date" className="w-full p-2 border rounded" value={formData.insuranceExpiry} onChange={e => setFormData({...formData, insuranceExpiry: e.target.value})} />
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Insurance Expiry</label>
+                                <input type="date" className="w-full p-2 border rounded" value={formData.insuranceExpiry} onChange={e => setFormData({...formData, insuranceExpiry: e.target.value})} />
                             </div>
 
                             <div>
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Rate (LKR/km)</label>
-                               <input type="number" className="w-full p-2 border rounded" value={formData.rate} onChange={e => setFormData({...formData, rate: e.target.value})} />
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Rate (LKR/km)</label>
+                                <input type="number" className="w-full p-2 border rounded" value={formData.rate} onChange={e => setFormData({...formData, rate: e.target.value})} />
                             </div>
 
                             <div>
-                               {/* Service Interval is included here for editing */}
-                               <label className="block text-xs font-semibold text-gray-700 mb-1">Service Interval (km)</label>
-                               <input type="number" className="w-full p-2 border rounded" value={formData.serviceInterval} onChange={e => setFormData({...formData, serviceInterval: e.target.value})} />
+                                {/* Service Interval is included here for editing */}
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Service Interval (km)</label>
+                                <input type="number" className="w-full p-2 border rounded" value={formData.serviceInterval} onChange={e => setFormData({...formData, serviceInterval: e.target.value})} />
                             </div>
                         </div>
                     </div>
@@ -1406,7 +1434,7 @@ export function VehicleManagement({ user, onNavigate, onLogout }: VehicleManagem
                             {isEditing ? 'Update Vehicle' : 'Save Vehicle'}
                         </button>
                     </div>
-                   </Card>
+                    </Card>
                 </div>
             )}
         </div>

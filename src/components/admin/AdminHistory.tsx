@@ -12,6 +12,19 @@ interface AdminHistoryProps {
   onLogout: () => void;
 }
 
+// Comprehensive list of audit sections across all admin features
+const AUDIT_SECTIONS = [
+    'All',
+    'User Management',
+    'Vehicle Management', 
+    'Driver Management',
+    'Trip Approval',
+    'Admin Management',
+    'Payroll Management',
+    'TRIP_BOOKING_ADMIN', 
+];
+
+
 export function AdminHistory({ user, onNavigate, onLogout }: AdminHistoryProps) {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,13 +46,29 @@ export function AdminHistory({ user, onNavigate, onLogout }: AdminHistoryProps) 
         // Fetch logs ordered by newest first
         const q = query(collection(db, 'system_logs'), orderBy('timestamp', 'desc')); 
         const snapshot = await getDocs(q);
-        data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // 💥 FIX 1: Add fallbacks for potentially undefined fields during mapping
+        data = snapshot.docs.map(doc => ({ 
+            id: doc.id, 
+            ...doc.data(),
+            section: doc.data().section || 'Unknown Section', // Safe default
+            adminName: doc.data().adminName || 'N/A',
+            adminEmail: doc.data().adminEmail || 'N/A',
+            action: doc.data().action || 'No action defined',
+            details: doc.data().details || 'No details provided'
+        }));
       } catch (indexError) {
-        // Fallback if index is missing (client-side sort)
         console.warn("Index missing, falling back to manual sort");
         const q = query(collection(db, 'system_logs'));
         const snapshot = await getDocs(q);
-        data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        data = snapshot.docs.map(doc => ({ 
+            id: doc.id, 
+            ...doc.data(),
+            section: doc.data().section || 'Unknown Section', // Safe default
+            adminName: doc.data().adminName || 'N/A',
+            adminEmail: doc.data().adminEmail || 'N/A',
+            action: doc.data().action || 'No action defined',
+            details: doc.data().details || 'No details provided'
+        }));
         data.sort((a: any, b: any) => b.timestamp.localeCompare(a.timestamp));
       }
       setLogs(data);
@@ -65,6 +94,26 @@ export function AdminHistory({ user, onNavigate, onLogout }: AdminHistoryProps) 
 
     return matchesSection && matchesSearch && matchesDate;
   });
+
+  // Helper to determine the badge style based on section
+  const getBadgeClass = (section: string) => {
+      switch (section) {
+          case 'Admin Management':
+              return 'bg-purple-50 text-purple-700 border-purple-100';
+          case 'Trip Approval':
+              return 'bg-orange-50 text-orange-700 border-orange-100';
+          case 'TRIP_BOOKING_ADMIN':
+              return 'bg-green-100 text-green-800 border-green-200';
+          case 'Vehicle Management':
+              return 'bg-green-50 text-green-700 border-green-100';
+          case 'Driver Management':
+              return 'bg-indigo-50 text-indigo-700 border-indigo-100';
+          case 'Payroll Management':
+              return 'bg-yellow-50 text-yellow-700 border-yellow-100';
+          default: // Handles 'Unknown Section' or future additions safely
+              return 'bg-gray-200 text-gray-700 border-gray-300';
+      }
+  };
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
@@ -103,13 +152,11 @@ export function AdminHistory({ user, onNavigate, onLogout }: AdminHistoryProps) 
                     onChange={(e) => setFilterSection(e.target.value)}
                     className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none appearance-none bg-white text-sm"
                 >
-                    <option value="All">All Sections</option>
-                    <option value="User Management">User Management</option>
-                    <option value="Vehicle Management">Vehicle Management</option>
-                    <option value="Driver Management">Driver Management</option>
-                    <option value="Trip Approval">Trip Approval</option>
-                    <option value="Admin Management">Admin Management</option>
-                    <option value="Vehicle Maintenance">Vehicle Maintenance</option> {/* 🆕 NEW FILTER OPTION */}
+                    {AUDIT_SECTIONS.map(section => (
+                        <option key={section} value={section}>
+                            {section.replace(/_/g, ' ')}
+                        </option>
+                    ))}
                 </select>
             </div>
 
@@ -183,13 +230,9 @@ export function AdminHistory({ user, onNavigate, onLogout }: AdminHistoryProps) 
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${
-                                            log.section === 'Admin Management' ? 'bg-purple-50 text-purple-700 border-purple-100' :
-                                            log.section === 'Trip Approval' || log.section === 'Vehicle Maintenance' ? 'bg-orange-50 text-orange-700 border-orange-100' : // Group Maintenance/Approval colors
-                                            log.section === 'Vehicle Management' ? 'bg-green-50 text-green-700 border-green-100' :
-                                            'bg-blue-50 text-blue-700 border-blue-100'
-                                        }`}>
-                                            {log.section}
+                                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${getBadgeClass(log.section)}`}>
+                                            {/* 💥 FIX 2: Safe replace call 💥 */}
+                                            {log.section.replace(/_/g, ' ')}
                                         </span>
                                     </td>
                                     <td className="px-6 py-4">

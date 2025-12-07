@@ -111,7 +111,125 @@ const generateNextSerialNumber = async (prefix: 'N' | 'B' | 'M'): Promise<string
      const mockIncrement = String(Math.floor(Math.random() * 900) + 100); 
      return `${prefix}-${datePart}-${timePart}-${mockIncrement}`;
 };
-const generateTripTicketHalfA4PDF = async (trip: any, adminUser: User) => { console.log("MOCK: Generating PDF"); };
+
+// 🌟 NEW PDF HEADER HELPER 🌟
+// Centralized function to add the company logo and report title
+const applyReportHeader = (doc: jsPDF, reportName: string, subTitle?: string, startX: number = 10, startY: number = 10) => {
+    // Image Path (Assuming 'report-header.jpg' is in the public folder)
+    const imgData = 'report-header.jpg'; 
+    const imgWidth = 40; // Smaller logo for trip ticket
+    const imgHeight = 20; 
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const centerOffset = (pageWidth - imgWidth) / 2; 
+
+    // Add Logo (Centrally aligned)
+    try {
+        doc.addImage(imgData, 'JPEG', centerOffset, startY, imgWidth, imgHeight); 
+    } catch (e) {
+        // Fallback text if image fails to load/render
+        doc.setFontSize(8);
+        doc.setFont(undefined, 'bold');
+        doc.text("Company Logo Placeholder", centerOffset, startY + 5);
+    }
+
+    let y = startY + imgHeight + 5; 
+    
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.text(reportName, pageWidth / 2, y, { align: 'center' });
+    y += 5;
+    
+    if (subTitle) {
+        doc.setFontSize(10);
+        doc.setFont(undefined, 'normal');
+        doc.text(subTitle, pageWidth / 2, y, { align: 'center' });
+        y += 4;
+    }
+
+    return y; // Return the new starting Y position for the content
+}
+
+// 🎯 UPDATED MOCK FUNCTION to include PDF generation logic
+const generateTripTicketHalfA4PDF = async (trip: any, adminUser: User) => { 
+    const doc = new jsPDF('p', 'mm', [105, 148]); // Half A4 Size (A6 is too small)
+    const marginX = 5;
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // 🌟 Apply Header 🌟
+    let y = applyReportHeader(doc, "Official Trip Ticket", `Approved by Admin: ${adminUser.name || adminUser.email}`, 10, 5);
+    y += 5;
+
+    // --- Content ---
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.text(`TRIP SERIAL NO: ${trip.serialNumber || 'N/A'}`, marginX, y);
+    y += 5;
+    
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Date: ${trip.date} @ ${trip.time}`, marginX, y);
+    y += 4;
+    doc.text(`Approved At: ${new Date(trip.approvedAt).toLocaleString()}`, marginX, y);
+    y += 6;
+    
+    // --- Trip Details Table ---
+    const route = [trip.pickup, ...(trip.destinations || []), trip.destination];
+    
+    // 🌟 FIX: Correctly format passenger list for single and merged trips 🌟
+    let passengers;
+    if (trip.linkedTripDetails) {
+        // Merged Trip: Concatenate details for all linked customers
+        passengers = trip.linkedTripDetails
+            .map((d: any) => `${d.customerName || 'N/A'} (Ph: ${d.phone || 'N/A'})`)
+            .join('\n');
+    } else {
+        // Single Trip
+        passengers = `${trip.customerName || 'N/A'} (Ph: ${trip.phone || 'N/A'})`;
+    }
+    
+    const totalPassengers = trip.linkedTripDetails ? trip.passengers : (trip.passengers || 1);
+    
+    const tableData = [
+        ['Status', trip.status.toUpperCase()],
+        ['Vehicle No', trip.vehicleNumber || 'N/A'],
+        ['Driver', trip.driverName || 'N/A'],
+        ['Total Passengers', totalPassengers],
+        ['Total Cost (Est.)', trip.cost || 'LKR 0'],
+        // 🌟 Use the correctly formatted passenger list 🌟
+        ['Customer(s) / Phone', passengers],
+    ];
+
+    autoTable(doc, {
+        startY: y,
+        head: [['Field', 'Detail']],
+        body: tableData,
+        theme: 'striped',
+        headStyles: { fillColor: [52, 152, 219] },
+        styles: { fontSize: 7, cellPadding: 1 },
+        columnStyles: { 
+            0: { fontStyle: 'bold', cellWidth: 30 },
+            1: { cellWidth: pageWidth - 35, fontStyle: 'normal' }
+        },
+        margin: { left: marginX, right: marginX }
+    });
+
+    y = (doc as any).lastAutoTable.finalY + 3;
+    
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'bold');
+    doc.text("ROUTE:", marginX, y);
+    y += 4;
+    
+    doc.setFontSize(7);
+    doc.setFont(undefined, 'normal');
+    route.forEach((point: string, index: number) => {
+        doc.text(`${index === 0 ? 'START' : index === route.length - 1 ? 'END' : `STOP ${index}`} : ${point}`, marginX, y);
+        y += 3;
+    });
+
+    doc.save(`Trip_Ticket_${trip.serialNumber}.pdf`);
+    console.log(`MOCK: Generating PDF for Trip Ticket #${trip.serialNumber}`);
+};
 
 
 // 🎯 RESTORED: Calculate Distance Run by Original Vehicle (Map-based)
@@ -857,9 +975,10 @@ export function TripApproval({ user, onNavigate, onLogout }: TripApprovalProps) 
                 driverName: driverName, 
                 cost: finalCost, 
                 status: 'approved',
-                linkedTripDetails: [
-                    { id: selectedTrip.id, customerName: selectedTrip.customerName, phone: selectedTrip.phone, passengers: selectedTrip.passengers, epf: selectedTrip.epf, destination: selectedTrip.destination }
-                ]
+                linkedTripDetails: null, // Ensure this is null for a standard trip
+                // Pass customer details for single trip ticket generation
+                customerName: selectedTrip.customerName || selectedTrip.customer,
+                phone: selectedTrip.phone || selectedTrip.customerPhone
             }, user);
             
             console.log(`MOCK: Sent Driver email to ${driver.email} with new trip details.`);

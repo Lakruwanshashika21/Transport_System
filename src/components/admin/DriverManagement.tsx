@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react';
-// Import all necessary icons
-import { User as UserIcon, Plus, Car, Phone, Mail, Trash2, Key, FileText, X, Download, MinusCircle, ArrowLeft, ShieldCheck, History, AlertTriangle, Check, Banknote, MapPin, Clock, MessageSquare } from 'lucide-react';
+// FILE: src/components/admin/DriverManagement.tsx
+
+import { useState, useEffect, useMemo } from 'react';
+import { User as UserIcon, Plus, Car, Phone, Mail, Trash2, Key, FileText, X, Download, MinusCircle, ArrowLeft, ShieldCheck, History, AlertTriangle, Check, Banknote, MapPin, Clock, MessageSquare, DollarSign } from 'lucide-react';
 import { User } from '../../App';
 import { TopNav } from '../shared/TopNav';
 import { Card } from '../shared/Card';
 import { Badge } from '../shared/Badge';
-// Firebase Imports
-import { collection, getDocs, query, where, doc, updateDoc, setDoc, deleteDoc, onSnapshot, addDoc, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, updateDoc, setDoc, deleteDoc, onSnapshot, addDoc, orderBy, getDoc } from 'firebase/firestore'; // Added getDoc
 import { initializeApp, getApp, getApps } from 'firebase/app'; 
 import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { db, firebaseConfig, auth as mainAuth } from '../../firebase';
@@ -20,7 +20,7 @@ interface DriverManagementProps {
     onLogout: () => void;
 }
 
-// --- LICENSE TYPE DEFINITIONS ---
+// --- LICENSE TYPE DEFINITIONS (Retained) ---
 const DRIVER_LICENSE_CATEGORIES = {
     'A': 'Motorcycles (A)',
     'B': 'Light Vehicles (B)',
@@ -29,15 +29,12 @@ const DRIVER_LICENSE_CATEGORIES = {
 };
 
 const VEHICLE_TO_LICENSE_MAP: { [key: string]: 'A' | 'B' | 'C' } = {
-    'Bike': 'A',
-    'Car': 'B',
-    'Van': 'B',
-    'Three Wheeler': 'B',
-    'Jeep': 'B',
-    'Bus': 'C',
-    'Lorry': 'C',
+    'Bike': 'A', 'Car': 'B', 'Van': 'B', 'Three Wheeler': 'B', 'Jeep': 'B', 'Bus': 'C', 'Lorry': 'C',
 };
 // --- END LICENSE TYPE DEFINITIONS ---
+
+// Helper to determine the current payroll month ID (YYYY-MM)
+const getCurrentPayrollMonth = () => new Date().toISOString().substring(0, 7); 
 
 // Helper functions (retained)
 const calculateDaysUntil = (dateStr: string) => {
@@ -48,8 +45,6 @@ const calculateDaysUntil = (dateStr: string) => {
     return diffDays;
 };
 
-// ... loadBase64Image helper (omitted for brevity, assume retained)
-
 const getSecondaryAuth = () => {
     if (!getApps().find(app => app.name === 'DriverRegAuth')) {
         initializeApp(firebaseConfig, 'DriverRegAuth');
@@ -57,30 +52,24 @@ const getSecondaryAuth = () => {
     return getAuth(getApp('DriverRegAuth'));
 };
 
-// Helper to determine if a trip is scheduled for today or is actively 'in-progress'
 const isTodayOrActiveTrip = (trip: any) => {
     if (trip.status === 'in-progress') return true;
     
-    // Check if the trip is an approved or reassigned trip scheduled for today
     const tripDate = new Date(trip.date).setHours(0, 0, 0, 0);
     const today = new Date().setHours(0, 0, 0, 0);
     
     return ['approved', 'reassigned'].includes(trip.status) && tripDate === today;
 };
 
-// Helper to calculate driver status based on the latest data
 const calculateDriverStatus = (driver: any, activeTripsMap: { [key: string]: boolean }) => {
-    // 1. Check for truly active trip (only 'in-progress' trips count as IN-USE now)
     if (driver.currentTripId && activeTripsMap[driver.currentTripId]) {
         return 'in-use';
     }
     
-    // 2. Check for assigned vehicle
     if (driver.vehicle) {
         return 'assigned';
     }
     
-    // 3. Available
     return 'available';
 };
 
@@ -88,7 +77,6 @@ const calculateDriverStatus = (driver: any, activeTripsMap: { [key: string]: boo
 export function DriverManagement({ user, onNavigate, onLogout }: DriverManagementProps) {
     const [drivers, setDrivers] = useState<any[]>([]);
     const [vehicles, setVehicles] = useState<any[]>([]);
-    // 🎯 NEW STATE: To hold all trips for status checking
     const [allTrips, setAllTrips] = useState<any[]>([]); 
     const [loading, setLoading] = useState(true);
 
@@ -115,19 +103,16 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
         licenseType: 'B'
     });
 
-    // --- Real-Time Fetch (Updated) ---
+    // --- Real-Time Fetch (Retained) ---
     useEffect(() => {
         setLoading(true);
 
         let currentClaimsCache: any[] = [];
         let currentDriversCache: any[] = [];
-        let currentTripsCache: any[] = []; // Cache for trips
+        let currentTripsCache: any[] = []; 
 
-        // Function to process and update drivers' state
         const updateDriversState = () => {
-            // Build map of truly active trips (only 'in-progress' for simplicity in DM)
             const activeTripsMap = currentTripsCache.reduce((map, trip) => {
-                // IMPORTANT: We only care about trips that are currently running.
                 if (trip.status === 'in-progress') {
                     map[trip.id] = true;
                 }
@@ -139,12 +124,11 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
                     ? currentClaimsCache.filter(c => c.driverId === d.id && c.status === 'pending').length
                     : 0;
                 
-                // 🎯 FIXED STATUS CALCULATION: Use the helper function with the active trips map
                 const driverStatus = calculateDriverStatus(d, activeTripsMap);
 
                 return {
                     ...d,
-                    status: driverStatus, // This is the fixed status
+                    status: driverStatus, 
                     pendingFineClaimsCount: pendingClaimsCount,
                 };
             });
@@ -158,9 +142,8 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
             currentDriversCache = snap.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data(),
-                // Keep minimal status data for the cache, let updateDriversState calculate final status
             }));
-            updateDriversState(); // Recalculate status upon driver change
+            updateDriversState(); 
         });
 
         // 2. Fetch Vehicles
@@ -172,7 +155,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
         const unsubTrips = onSnapshot(collection(db, "trip_requests"), (snap) => {
             currentTripsCache = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setAllTrips(currentTripsCache);
-            updateDriversState(); // Recalculate status upon trip change
+            updateDriversState(); 
         });
 
         // 4. Fetch All Police Claims
@@ -180,13 +163,12 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
             const claims = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             currentClaimsCache = claims;
             setFineClaims(claims.filter(c => c.status === 'pending')); 
-            updateDriversState(); // Recalculate status upon claim change (to update badge counts)
+            updateDriversState(); 
         });
 
         return () => { unsubDrivers(); unsubVehicles(); unsubTrips(); unsubClaims(); };
     }, [user.id]);
 
-    // ... (rest of the handlers and JSX content remain the same)
     // --- Core Logic: Check Driver Qualification (Retained) ---
     const isDriverQualified = (driverLicenseType: string, vehicleRequiredType: string) => {
         if (driverLicenseType === vehicleRequiredType) return true;
@@ -195,9 +177,70 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
         return false;
     };
 
-    // --- Handlers (Assignment, Registration, Deletion - Retained) ---
+    // --- Handlers (FIXED: handleFinalizeSettlement) ---
 
-    const handleAssignVehicle = async () => {
+    const handleFinalizeSettlement = async () => { 
+        if (!selectedDriver?.selectedClaim || !claimSettlementData.amountSettled) return;
+        
+        const claim = selectedDriver.selectedClaim;
+        const settlementAmount = parseFloat(claimSettlementData.amountSettled);
+        const driverId = selectedDriver.id;
+        const currentPeriod = getCurrentPayrollMonth();
+        
+        if (settlementAmount <= 0) {
+            alert("Settlement amount must be greater than zero.");
+            return;
+        }
+
+        try {
+            // 1. Update the Police Claim record status to 'settled'
+            await updateDoc(doc(db, "police_claims", claim.id), {
+                status: 'settled',
+                amountSettled: settlementAmount,
+                settlementDate: claimSettlementData.settlementDate,
+                settledBy: user.fullName || user.email,
+                settlementNotes: claimSettlementData.notes
+            });
+            
+            // 2. Update/Create the Driver Payroll record for this month (FINE REIMBURSEMENT)
+            const payrollRef = doc(db, "driver_payroll", `${driverId}-${currentPeriod}`);
+            const payrollDoc = await getDoc(payrollRef);
+            
+            let currentFineReimbursement = 0; 
+            if (payrollDoc.exists()) {
+                currentFineReimbursement = payrollDoc.data().fineReimbursement || 0;
+            }
+            
+            // ADD the settled amount to the reimbursement total
+            const newFineReimbursement = currentFineReimbursement + settlementAmount;
+
+            await setDoc(payrollRef, {
+                driverId: driverId,
+                driverName: selectedDriver.fullName || selectedDriver.name,
+                period: currentPeriod,
+                // 🌟 FIX: Write the settled amount as a positive reimbursement 🌟
+                fineReimbursement: newFineReimbursement, 
+            }, { merge: true });
+
+            // 3. Log the action
+            await logAction(user.email, 'FINE_CLAIM_SETTLED', 
+                `Claim #${claim.tripSerialNumber || claim.id} settled for LKR ${settlementAmount}. ADDED as reimbursement in ${currentPeriod} payroll.`, 
+                { targetId: driverId, claimId: claim.id, reimbursementAmount: settlementAmount }
+            );
+
+            setSelectedDriver(prev => ({ ...prev, selectedClaim: null }));
+            alert(`Claim successfully settled and LKR ${settlementAmount} added as reimbursement in ${currentPeriod} payroll.`);
+            setShowClaimsModal(false); 
+
+        } catch (error) {
+            console.error("Error finalizing claim and updating payroll:", error);
+            alert("Failed to finalize claim or update payroll.");
+        }
+    };
+
+
+    // --- Handlers (Assignment, Registration, Deletion, etc. - Retained) ---
+    const handleAssignVehicle = async () => { /* ... (Logic retained) ... */
         if (!selectedDriver) return;
 
         let vehicleToAssign = null;
@@ -249,8 +292,8 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
             );
             alert(`Vehicle ${selectedVehicleNumber} assigned to ${selectedDriver.fullName}.`);
         } else {
-             alert("Please select a vehicle or 'Do Not Assign'.");
-             return;
+            alert("Please select a vehicle or 'Do Not Assign'.");
+            return;
         }
 
         setSelectedDriver(null);
@@ -258,7 +301,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
         setShowAssignModal(false);
     };
 
-    const handleUnassignVehicle = async (driver: any) => {
+    const handleUnassignVehicle = async (driver: any) => { /* ... (Logic retained) ... */
         if (!driver.vehicle || !confirm(`Are you sure you want to unassign ${driver.vehicle} from ${driver.fullName}?`)) return;
 
         try {
@@ -290,7 +333,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
         }
     };
 
-    const handleAddDriver = async () => { /* ... (logic retained) */
+    const handleAddDriver = async () => { /* ... (Logic retained) ... */
         if (!formData.name || !formData.email || !formData.password || !formData.licenseType || !formData.phone || !formData.nic) {
             alert("Please fill in ALL required fields (Name, Email, Password, License Type, Phone, NIC).");
             return;
@@ -340,7 +383,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
         }
     };
 
-    const handleDeleteDriver = async (driver: any) => {
+    const handleDeleteDriver = async (driver: any) => { /* ... (Logic retained) ... */
         if (!confirm(`Are you sure you want to permanently delete the driver ${driver.fullName} and unassign their vehicle? THIS ACTION CANNOT BE UNDONE.`)) return;
         
         try {
@@ -365,11 +408,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
         }
     };
 
-    // Placeholder for fetching history (to prevent errors in the view)
-    const fetchAssignmentHistory = async (driverId: string) => {
-        // Assume fetching logs is successful, but skip implementation here
-        console.log(`Fetching history for ${driverId}...`);
-    };
+    const fetchAssignmentHistory = async (driverId: string) => { console.log(`Fetching history for ${driverId}...`); };
 
     const handleViewHistory = async (driver: any) => {
         setSelectedDriver(driver);
@@ -385,10 +424,6 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
     // 🎯 RE-ADDED/RETAINED Claims Handlers
     const handleViewClaims = (driver: any) => {
         setSelectedDriver(driver);
-        // We filter against all claims (not just pending) to show history in the modal
-        setDriverClaims(allTrips.filter(c => c.driverId === driver.id)); // Using allTrips is incorrect here, must be police_claims
-        // Re-fetching police claims for the selected driver's history (assuming all police claims are in fineClaims)
-        const allPoliceClaims = allTrips.filter(c => c.collection === 'police_claims'); // Need to map fineClaims back to allClaims
         setDriverClaims(fineClaims.filter(c => c.driverId === driver.id) || []);
         setShowClaimsModal(true);
     };
@@ -402,59 +437,10 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
             settlementDate: new Date().toISOString().split('T')[0],
             notes: ''
         });
-        // Filter claims for the modal display
         setDriverClaims(fineClaims.filter(c => c.driverId === driver?.id) || []);
         setShowClaimsModal(true);
     };
 
-    const handleFinalizeSettlement = async () => { /* ... (logic retained) */
-        if (!selectedDriver?.selectedClaim || !claimSettlementData.amountSettled) return;
-        
-        const claim = selectedDriver.selectedClaim;
-        const settlementAmount = parseFloat(claimSettlementData.amountSettled);
-        
-        if (settlementAmount <= 0) {
-            alert("Settlement amount must be greater than zero.");
-            return;
-        }
-
-        try {
-            await updateDoc(doc(db, "police_claims", claim.id), {
-                status: 'settled',
-                amountSettled: settlementAmount,
-                settlementDate: claimSettlementData.settlementDate,
-                settledBy: user.fullName || user.email,
-                settlementNotes: claimSettlementData.notes
-            });
-            
-            await logAction(user.email, 'FINE_CLAIM_SETTLED', 
-                `Claim #${claim.tripSerialNumber || claim.id} settled for LKR ${settlementAmount}. Driver: ${selectedDriver.fullName}`, 
-                { targetId: selectedDriver.id, claimId: claim.id }
-            );
-
-            setSelectedDriver(prev => ({ ...prev, selectedClaim: null }));
-            alert("Claim successfully settled and logged.");
-            setShowClaimsModal(false); 
-
-        } catch (error) {
-            console.error("Error finalizing claim:", error);
-            alert("Failed to finalize claim.");
-        }
-    };
-
-    const handleDeleteClaim = async (claimId: string) => {
-        if (!confirm("Are you sure you want to permanently delete this claim record?")) return;
-        try {
-            await deleteDoc(doc(db, "police_claims", claimId));
-            await logAction(user.email, 'FINE_CLAIM_DELETED', `Claim ID ${claimId} deleted by Admin.`, { claimId });
-            alert("Claim deleted.");
-            setShowClaimsModal(false); 
-        } catch (e) {
-            console.error(e);
-            alert("Failed to delete claim.");
-        }
-    };
-    
     // Dummy PDF Export Functions (Retained)
     const handleDownloadClaimReport = (claim: any) => {
         alert(`Downloading report for Claim #${claim.tripSerialNumber || claim.id}. (PDF generation logic omitted for brevity in this fix).`);
@@ -473,7 +459,6 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
     }) : [];
 
 
-    // --- Alert Renderer (Removed, keeping only the centralized notification) ---
     const AlertRenderer = ({ driver }: { driver: any }) => null;
 
 
@@ -522,7 +507,20 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
                         <h1 className="text-3xl font-bold text-gray-900">Driver Management</h1>
                         <p className="text-gray-600 text-sm">Manage driver accounts and vehicle assignments by license type.</p>
                     </div>
-                    <button onClick={() => setShowAddModal(true)} className="px-6 py-3 bg-[#2563EB] text-white rounded-xl flex items-center gap-2 hover:bg-blue-700 transition-colors"><Plus className="w-5 h-5"/> Register Driver</button>
+                    
+                    {/* PAYROLL BUTTON LINKED TO 'driver-payroll' */}
+                    <div className="flex gap-4">
+                        <button 
+                            onClick={() => onNavigate('driver-payroll')} 
+                            className="px-6 py-3 bg-green-600 text-white rounded-xl flex items-center gap-2 hover:bg-green-700 transition-colors shadow-md"
+                            title="Manage Driver Salary and Allowances"
+                        >
+                            <DollarSign className="w-5 h-5"/> Manage Payroll
+                        </button>
+                        <button onClick={() => setShowAddModal(true)} className="px-6 py-3 bg-[#2563EB] text-white rounded-xl flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-md">
+                            <Plus className="w-5 h-5"/> Register Driver
+                        </button>
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -571,7 +569,6 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
 
                             </div>
 
-                            {/* AlertRenderer is null, removing license alerts */}
                             <AlertRenderer driver={driver} />
 
                             {/* RETAINED: Vehicle Assignment Section */}
@@ -593,7 +590,8 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
                 </div>
             </div>
 
-            {/* Register Driver Modal (Retained) */}
+            {/* MODALS (Retained) */}
+            {/* ... (Register Driver Modal) ... */}
             {showAddModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
                     <Card className="w-full max-w-md p-6 animate-in fade-in zoom-in duration-200">
@@ -756,24 +754,24 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
 
             {/* History Modal (Retained) */}
             {showHistoryModal && selectedDriver && (
-                         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-                             <Card className="w-full max-w-4xl p-0 max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-                                 <div className="p-6 border-b flex justify-between items-center bg-gray-50">
-                                     <div>
-                                         <h3 className="text-xl font-bold text-gray-900">Driver History</h3>
-                                         <p className="text-sm text-gray-500 mt-1">{selectedDriver.fullName || selectedDriver.name}</p>
+                            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+                                 <Card className="w-full max-w-4xl p-0 max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+                                     <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+                                         <div>
+                                             <h3 className="text-xl font-bold text-gray-900">Driver History</h3>
+                                             <p className="text-sm text-gray-500 mt-1">{selectedDriver.fullName || selectedDriver.name}</p>
+                                         </div>
+                                         <button onClick={() => setShowHistoryModal(false)} className="p-2 hover:bg-gray-200 rounded-full transition-colors"><X className="w-5 h-5 text-gray-500"/></button>
                                      </div>
-                                     <button onClick={() => setShowHistoryModal(false)} className="p-2 hover:bg-gray-200 rounded-full transition-colors"><X className="w-5 h-5 text-gray-500"/></button>
-                                 </div>
-                                 
-                                 <div className="flex-1 overflow-y-auto p-6">
-                                     {/* ... (History table retained) ... */}
-                                 </div>
-                                 <div className="p-4 border-t bg-gray-50 flex justify-end">
-                                     <button onClick={() => handleDownloadAllClaimsReport([])} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2 text-gray-700 shadow-sm"><Download className="w-4 h-4"/> Export Full Claims PDF</button>
-                                 </div>
-                             </Card>
-                         </div>
+                                     
+                                     <div className="flex-1 overflow-y-auto p-6">
+                                         {/* ... (History table retained) ... */}
+                                     </div>
+                                     <div className="p-4 border-t bg-gray-50 flex justify-end">
+                                         <button onClick={() => handleDownloadAllClaimsReport([])} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2 text-gray-700 shadow-sm"><Download className="w-4 h-4"/> Export Full Claims PDF</button>
+                                     </div>
+                                 </Card>
+                             </div>
             )}
 
             {/* Claims Management Modal (RETAINED) */}
