@@ -68,10 +68,10 @@ export function Footer() {
             <div className="flex items-center gap-0 bg-white border border-gray-100 rounded-full pl-6 pr-2 py-2 shadow-sm hover:shadow-md transition-shadow">
               {/* Social Icons */}
               <div className="flex gap-4 text-gray-400">
-                <a href="#" className="hover:text-[#1877F2] transition-colors transform hover:scale-110"><Facebook className="w-5 h-5" /></a>
+                <a href="https://www.youtube.com/@carlosembellishers4252" className="hover:text-[#1877F2] transition-colors transform hover:scale-110"><Facebook className="w-5 h-5" /></a>
                 <a href="#" className="hover:text-[#E4405F] transition-colors transform hover:scale-110"><Instagram className="w-5 h-5" /></a>
-                <a href="#" className="hover:text-[#0A66C2] transition-colors transform hover:scale-110"><Linkedin className="w-5 h-5" /></a>
-                <a href="#" className="hover:text-[#FF0000] transition-colors transform hover:scale-110"><Youtube className="w-5 h-5" /></a>
+                <a href="https://www.linkedin.com/in/carlos-holdings-14989221a/" className="hover:text-[#0A66C2] transition-colors transform hover:scale-110"><Linkedin className="w-5 h-5" /></a>
+                <a href="https://www.youtube.com/@carlosembellishers4252" className="hover:text-[#FF0000] transition-colors transform hover:scale-110"><Youtube className="w-5 h-5" /></a>
               </div>
               
               <div className="h-6 w-px bg-gray-200"></div>
