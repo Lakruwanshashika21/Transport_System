@@ -82,6 +82,9 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
 
     const [fineClaims, setFineClaims] = useState<any[]>([]);
     const [driverClaims, setDriverClaims] = useState<any[]>([]);
+    // 🌟 NEW STATE: Vehicle-related fines 🌟
+    const [vehicleFines, setVehicleFines] = useState<any[]>([]);
+    
     const [showClaimsModal, setShowClaimsModal] = useState(false);
     const [claimSettlementData, setClaimSettlementData] = useState({
         amountSettled: '',
@@ -177,7 +180,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
         return false;
     };
 
-    // --- Handlers (FIXED: handleFinalizeSettlement) ---
+    // --- Handlers ---
 
     const handleFinalizeSettlement = async () => { 
         if (!selectedDriver?.selectedClaim || !claimSettlementData.amountSettled) return;
@@ -239,6 +242,74 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
     };
 
 
+    // 🌟 NEW: Delete Police Claim Handler 🌟
+    const handleDeleteClaim = async (claimId: string) => {
+        if (!confirm(`Are you sure you want to permanently delete this police claim (${claimId})? This action cannot be undone.`)) {
+            return;
+        }
+        try {
+            await deleteDoc(doc(db, "police_claims", claimId));
+            
+            await logAction(user.email, 'POLICE_CLAIM_DELETED', 
+                `Police Claim ID: ${claimId} deleted.`, 
+                { targetId: selectedDriver?.id, claimId }
+            );
+            
+            alert("Police claim deleted successfully.");
+            // Refresh modal view
+            setDriverClaims(prev => prev.filter(c => c.id !== claimId));
+            setSelectedDriver(prev => ({ ...prev, selectedClaim: null })); // Close settlement form if open
+
+        } catch (error) {
+            console.error("Error deleting police claim:", error);
+            alert("Failed to delete the police claim.");
+        }
+    };
+
+
+    // 🌟 UPDATED: Handle View Claims (Now fetches Vehicle Fine History) 🌟
+    const handleViewClaims = async (driver: any) => {
+        setSelectedDriver(driver);
+        
+        // 1. Filter existing police_claims (from DB snapshot) for this driver
+        setDriverClaims(fineClaims.filter(c => c.driverId === driver.id) || []);
+
+        // 2. Fetch Vehicle Fine History (from Vehicle Management component logs)
+        let finesFromVehicle: any[] = [];
+        if (driver.vehicleId) {
+            try {
+                const vehicleDoc = await getDoc(doc(db, "vehicles", driver.vehicleId));
+                if (vehicleDoc.exists()) {
+                    // Filter the vehicle's fines array to only include fines logged while this driver was assigned.
+                    // NOTE: This assumes 'fines' in the vehicle document are chronological and track the driver/trip.
+                    // Since the current vehicle fines log is simple, we display all of them associated with the current vehicle.
+                    // Ideally, we'd cross-reference with assignment history, but for simple fix, we show all vehicle fines.
+                    finesFromVehicle = vehicleDoc.data().fines || [];
+                }
+            } catch (e) {
+                console.error("Error fetching vehicle fines:", e);
+            }
+        }
+        setVehicleFines(finesFromVehicle);
+
+        setShowClaimsModal(true);
+    };
+
+    const handleSettlementClick = (claim: any) => {
+        const driver = drivers.find(d => d.id === claim.driverId);
+        setSelectedDriver(driver); 
+        setSelectedDriver(prev => ({ ...prev, selectedClaim: claim }));
+        setClaimSettlementData({
+            amountSettled: claim.claimedAmount || '',
+            settlementDate: new Date().toISOString().split('T')[0],
+            notes: ''
+        });
+        // We ensure driverClaims is set here for the modal context
+        setDriverClaims(fineClaims.filter(c => c.driverId === driver?.id) || []); 
+        setVehicleFines([]); // Clear vehicle fines when focusing on a police claim settlement
+        setShowClaimsModal(true);
+    };
+    
     // --- Handlers (Assignment, Registration, Deletion, etc. - Retained) ---
     const handleAssignVehicle = async () => { /* ... (Logic retained) ... */
         if (!selectedDriver) return;
@@ -371,7 +442,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
             setFormData({ name: '', email: '', phone: '', licenseNumber: '', nic: '', password: '', licenseType: 'B' });
 
         } catch (error: any) {
-            console.error("Error registering driver:", error);
+            console.log("Error registering driver:", error);
             
             let errorMessage = error.message;
             if (error.code === 'auth/email-already-in-use') {
@@ -421,26 +492,6 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
         try { await sendPasswordResetEmail(mainAuth, email); alert("Password reset email sent."); } catch(e) { alert("Failed."); }
     };
     
-    // 🎯 RE-ADDED/RETAINED Claims Handlers
-    const handleViewClaims = (driver: any) => {
-        setSelectedDriver(driver);
-        setDriverClaims(fineClaims.filter(c => c.driverId === driver.id) || []);
-        setShowClaimsModal(true);
-    };
-
-    const handleSettlementClick = (claim: any) => {
-        const driver = drivers.find(d => d.id === claim.driverId);
-        setSelectedDriver(driver); 
-        setSelectedDriver(prev => ({ ...prev, selectedClaim: claim }));
-        setClaimSettlementData({
-            amountSettled: claim.claimedAmount || '',
-            settlementDate: new Date().toISOString().split('T')[0],
-            notes: ''
-        });
-        setDriverClaims(fineClaims.filter(c => c.driverId === driver?.id) || []);
-        setShowClaimsModal(true);
-    };
-
     // Dummy PDF Export Functions (Retained)
     const handleDownloadClaimReport = (claim: any) => {
         alert(`Downloading report for Claim #${claim.tripSerialNumber || claim.id}. (PDF generation logic omitted for brevity in this fix).`);
@@ -590,7 +641,7 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
                 </div>
             </div>
 
-            {/* MODALS (Retained) */}
+            {/* MODALS (Retained - Register, Assign, History) */}
             {/* ... (Register Driver Modal) ... */}
             {showAddModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -755,122 +806,149 @@ export function DriverManagement({ user, onNavigate, onLogout }: DriverManagemen
             {/* History Modal (Retained) */}
             {showHistoryModal && selectedDriver && (
                             <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-                                 <Card className="w-full max-w-4xl p-0 max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-                                     <div className="p-6 border-b flex justify-between items-center bg-gray-50">
-                                         <div>
-                                             <h3 className="text-xl font-bold text-gray-900">Driver History</h3>
-                                             <p className="text-sm text-gray-500 mt-1">{selectedDriver.fullName || selectedDriver.name}</p>
+                                     <Card className="w-full max-w-4xl p-0 max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+                                         <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+                                             <div>
+                                                 <h3 className="text-xl font-bold text-gray-900">Driver History</h3>
+                                                 <p className="text-sm text-gray-500 mt-1">{selectedDriver.fullName || selectedDriver.name}</p>
+                                             </div>
+                                             <button onClick={() => setShowHistoryModal(false)} className="p-2 hover:bg-gray-200 rounded-full transition-colors"><X className="w-5 h-5 text-gray-500"/></button>
                                          </div>
-                                         <button onClick={() => setShowHistoryModal(false)} className="p-2 hover:bg-gray-200 rounded-full transition-colors"><X className="w-5 h-5 text-gray-500"/></button>
-                                     </div>
-                                     
-                                     <div className="flex-1 overflow-y-auto p-6">
-                                         {/* ... (History table retained) ... */}
-                                     </div>
-                                     <div className="p-4 border-t bg-gray-50 flex justify-end">
-                                         <button onClick={() => handleDownloadAllClaimsReport([])} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2 text-gray-700 shadow-sm"><Download className="w-4 h-4"/> Export Full Claims PDF</button>
-                                     </div>
-                                 </Card>
-                             </div>
+                                         
+                                         <div className="flex-1 overflow-y-auto p-6">
+                                             {/* ... (History table retained) ... */}
+                                         </div>
+                                         <div className="p-4 border-t bg-gray-50 flex justify-end">
+                                             <button onClick={() => handleDownloadAllClaimsReport([])} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2 text-gray-700 shadow-sm"><Download className="w-4 h-4"/> Export Full Claims PDF</button>
+                                         </div>
+                                     </Card>
+                                 </div>
             )}
 
-            {/* Claims Management Modal (RETAINED) */}
+            {/* Claims Management Modal (UPDATED to include Vehicle Fines) */}
             {showClaimsModal && selectedDriver && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
                     <Card className="w-full max-w-4xl p-0 max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-                            <div className="p-6 border-b flex justify-between items-center bg-red-50/50">
-                                <div>
-                                    <h3 className="text-xl font-bold text-red-800 flex items-center gap-2"><Banknote className="w-5 h-5"/> Fine Claims Review</h3>
-                                    <p className="text-sm text-gray-700 mt-1">Driver: {selectedDriver.fullName || selectedDriver.name} ({driverClaims.length} total claims)</p>
+                        <div className="p-6 border-b flex justify-between items-center bg-red-50/50">
+                            <div>
+                                <h3 className="text-xl font-bold text-red-800 flex items-center gap-2"><Banknote className="w-5 h-5"/> Fine Claims Review</h3>
+                                <p className="text-sm text-gray-700 mt-1">Driver: {selectedDriver.fullName || selectedDriver.name} | Vehicle: {selectedDriver.vehicle || 'N/A'}</p>
+                            </div>
+                            <button onClick={() => setShowClaimsModal(false)} className="p-2 hover:bg-red-100 rounded-full transition-colors"><X className="w-5 h-5 text-gray-700"/></button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-6">
+                            
+                            {/* --- Section 1: Official Police Claims --- */}
+                            <h4 className="font-bold text-lg mb-4 text-gray-700 border-b pb-2 flex items-center gap-2">
+                                <ShieldCheck className='w-5 h-5 text-blue-600'/> Driver-Reported Police Claims ({driverClaims.length})
+                            </h4>
+                            
+                            {driverClaims.length === 0 ? (
+                                <div className="p-4 text-center text-gray-500 border rounded-xl bg-white mb-6">No pending or settled **Police Claims** logged by this driver.</div>
+                            ) : (
+                                <div className="space-y-4 mb-8">
+                                    {driverClaims.map((claim) => (
+                                        <Card key={claim.id} className={`p-4 border-l-4 ${claim.status === 'settled' ? 'bg-green-50 border-green-500' : 'bg-yellow-50 border-yellow-500'}`}>
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div className="text-sm font-bold text-gray-900">
+                                                    Claim # {claim.tripSerialNumber || 'N/A'} - LKR {claim.claimedAmount}
+                                                </div>
+                                                <Badge status={claim.status} size="sm"/>
+                                            </div>
+                                            <div className="text-xs text-gray-600 space-y-1">
+                                                <p><MapPin className="w-3 h-3 inline-block mr-1"/> **Venue:** {claim.venue}</p>
+                                                <p><Clock className="w-3 h-3 inline-block mr-1"/> **Date of Fine:** {claim.date}</p>
+                                                <p><Car className="w-3 h-3 inline-block mr-1"/> **Vehicle:** {claim.vehicleNumber}</p>
+                                                <p><MessageSquare className="w-3 h-3 inline-block mr-1"/> **Reason:** {claim.reason || 'N/A'}</p>
+                                            </div>
+
+                                            <div className="flex justify-end gap-2 pt-3 border-t mt-3">
+                                                {claim.status === 'pending' ? (
+                                                    <>
+                                                        {/* Settlement Form Button */}
+                                                        <button 
+                                                            onClick={() => handleSettlementClick(claim)}
+                                                            disabled={selectedDriver?.selectedClaim && selectedDriver.selectedClaim.id !== claim.id}
+                                                            className="px-4 py-1.5 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700 flex items-center gap-1"
+                                                        >
+                                                            <Check className="w-4 h-4"/> Settle Claim
+                                                        </button>
+                                                        {/* Delete Button */}
+                                                        <button 
+                                                            onClick={() => handleDeleteClaim(claim.id)}
+                                                            className="px-4 py-1.5 border border-gray-300 text-gray-600 rounded-xl text-sm hover:bg-gray-100 flex items-center gap-1"
+                                                        >
+                                                            <Trash2 className="w-4 h-4"/> Delete
+                                                        </button>
+                                                    </>
+                                                ) : (
+                                                    <button 
+                                                        onClick={() => handleDownloadClaimReport(claim)}
+                                                        className="px-4 py-1.5 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 flex items-center gap-1"
+                                                    >
+                                                        <Download className="w-4 h-4"/> Download Report
+                                                    </button>
+                                                )}
+                                                
+                                            </div>
+
+                                            {/* Settlement Form View (RETAINED) */}
+                                            {selectedDriver?.selectedClaim?.id === claim.id && claim.status === 'pending' && (
+                                                <div className="mt-4 p-4 border border-green-300 rounded-lg bg-white shadow-inner">
+                                                    <h5 className="font-bold text-sm mb-3">Finalize Settlement</h5>
+                                                    <div className="space-y-3">
+                                                        <div>
+                                                            <label className="block text-xs font-medium">Settlement Amount (LKR)</label>
+                                                            <input type="number" value={claimSettlementData.amountSettled} onChange={e => setClaimSettlementData({...claimSettlementData, amountSettled: e.target.value})} className="w-full p-2 border rounded-xl" placeholder="E.g. 5000" />
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-xs font-medium">Date Paid</label>
+                                                            <input type="date" value={claimSettlementData.settlementDate} onChange={e => setClaimSettlementData({...claimSettlementData, settlementDate: e.target.value})} className="w-full p-2 border rounded-xl" />
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-xs font-medium">Admin Notes</label>
+                                                            <textarea rows={2} value={claimSettlementData.notes} onChange={e => setClaimSettlementData({...claimSettlementData, notes: e.target.value})} className="w-full p-2 border rounded-xl" />
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex gap-2 mt-4">
+                                                        <button onClick={() => setSelectedDriver(prev => ({...prev, selectedClaim: null}))} className="flex-1 py-2 text-sm border rounded-xl">Cancel</button>
+                                                        <button onClick={handleFinalizeSettlement} className="flex-1 py-2 text-sm bg-green-700 text-white rounded-xl">Confirm Settlement</button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </Card>
+                                    ))}
                                 </div>
-                                <button onClick={() => setShowClaimsModal(false)} className="p-2 hover:bg-red-100 rounded-full transition-colors"><X className="w-5 h-5 text-gray-700"/></button>
-                            </div>
+                            )}
 
-                            <div className="flex-1 overflow-y-auto p-6">
-                                <h4 className="font-bold text-lg mb-4 text-gray-700">Claims History ({driverClaims.length})</h4>
-                                
-                                {driverClaims.length === 0 ? (
-                                    <div className="p-8 text-center text-gray-500 border rounded-xl">No fine claims logged by this driver.</div>
-                                ) : (
-                                    <div className="space-y-4">
-                                            {driverClaims.map((claim) => (
-                                                <Card key={claim.id} className={`p-4 border-l-4 ${claim.status === 'settled' ? 'bg-green-50 border-green-500' : 'bg-yellow-50 border-yellow-500'}`}>
-                                                    <div className="flex justify-between items-start mb-2">
-                                                        <div className="text-sm font-bold text-gray-900">
-                                                            Claim # {claim.tripSerialNumber || 'N/A'} - LKR {claim.claimedAmount}
-                                                        </div>
-                                                        <Badge status={claim.status} size="sm"/>
-                                                    </div>
-                                                    <div className="text-xs text-gray-600 space-y-1">
-                                                        <p><MapPin className="w-3 h-3 inline-block mr-1"/> **Venue:** {claim.venue}</p>
-                                                        <p><Clock className="w-3 h-3 inline-block mr-1"/> **Date of Fine:** {claim.date}</p>
-                                                        <p><Car className="w-3 h-3 inline-block mr-1"/> **Vehicle:** {claim.vehicleNumber}</p>
-                                                        <p><MessageSquare className="w-3 h-3 inline-block mr-1"/> **Reason:** {claim.reason || 'N/A'}</p>
-                                                    </div>
+                            {/* --- Section 2: General Vehicle Fines (from VehicleManagement log) --- */}
+                            <h4 className="font-bold text-lg mb-4 text-gray-700 border-b pb-2 flex items-center gap-2">
+                                <AlertTriangle className='w-5 h-5 text-red-600'/> Vehicle Fine History (Logged by Admin) ({vehicleFines.length})
+                            </h4>
 
-                                                    <div className="flex justify-end gap-2 pt-3 border-t mt-3">
-                                                        {claim.status === 'pending' ? (
-                                                            <>
-                                                                {/* Settlement Form Button */}
-                                                                <button 
-                                                                    onClick={() => handleSettlementClick(claim)}
-                                                                    disabled={selectedDriver?.selectedClaim && selectedDriver.selectedClaim.id !== claim.id}
-                                                                    className="px-4 py-1.5 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700 flex items-center gap-1"
-                                                                >
-                                                                    <Check className="w-4 h-4"/> Settle Claim
-                                                                </button>
-                                                                {/* Delete Button */}
-                                                                <button 
-                                                                    onClick={() => handleDeleteClaim(claim.id)}
-                                                                    className="px-4 py-1.5 border border-gray-300 text-gray-600 rounded-xl text-sm hover:bg-gray-100 flex items-center gap-1"
-                                                                >
-                                                                    <Trash2 className="w-4 h-4"/> Delete
-                                                                </button>
-                                                            </>
-                                                        ) : (
-                                                            <button 
-                                                                onClick={() => handleDownloadClaimReport(claim)}
-                                                                className="px-4 py-1.5 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 flex items-center gap-1"
-                                                            >
-                                                                <Download className="w-4 h-4"/> Download Report
-                                                            </button>
-                                                        )}
-                                                        
-                                                    </div>
+                            {vehicleFines.length === 0 ? (
+                                <div className="p-4 text-center text-gray-500 border rounded-xl bg-white">No **Vehicle Fines** logged for the assigned vehicle ({selectedDriver.vehicle || 'N/A'}).</div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {vehicleFines.slice().reverse().map((fine: any, index: number) => (
+                                        <div key={index} className="p-3 bg-red-50 rounded-xl border border-red-100">
+                                            <div className="flex justify-between items-center text-sm font-medium">
+                                                <span className="text-gray-900 font-bold">{fine.type} - {fine.cost}</span>
+                                                <span className="text-xs text-gray-500">{new Date(fine.date).toLocaleDateString()}</span>
+                                            </div>
+                                            <div className="text-xs text-gray-600 mt-1">
+                                                **Notes:** {fine.notes || 'N/A'} | **Driver Tagged:** {fine.driverName || 'N/A'}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
 
-                                                    {/* Settlement Form View (RETAINED) */}
-                                                    {selectedDriver?.selectedClaim?.id === claim.id && claim.status === 'pending' && (
-                                                        <div className="mt-4 p-4 border border-green-300 rounded-lg bg-white shadow-inner">
-                                                            <h5 className="font-bold text-sm mb-3">Finalize Settlement</h5>
-                                                            <div className="space-y-3">
-                                                                <div>
-                                                                    <label className="block text-xs font-medium">Settlement Amount (LKR)</label>
-                                                                    <input type="number" value={claimSettlementData.amountSettled} onChange={e => setClaimSettlementData({...claimSettlementData, amountSettled: e.target.value})} className="w-full p-2 border rounded-xl" placeholder="E.g. 5000" />
-                                                                </div>
-                                                                <div>
-                                                                    <label className="block text-xs font-medium">Date Paid</label>
-                                                                    <input type="date" value={claimSettlementData.settlementDate} onChange={e => setClaimSettlementData({...claimSettlementData, settlementDate: e.target.value})} className="w-full p-2 border rounded-xl" />
-                                                                </div>
-                                                                <div>
-                                                                    <label className="block text-xs font-medium">Admin Notes</label>
-                                                                    <textarea rows={2} value={claimSettlementData.notes} onChange={e => setClaimSettlementData({...claimSettlementData, notes: e.target.value})} className="w-full p-2 border rounded-xl" />
-                                                                </div>
-                                                            </div>
-                                                            <div className="flex gap-2 mt-4">
-                                                                <button onClick={() => setSelectedDriver(prev => ({...prev, selectedClaim: null}))} className="flex-1 py-2 text-sm border rounded-xl">Cancel</button>
-                                                                <button onClick={handleFinalizeSettlement} className="flex-1 py-2 text-sm bg-green-700 text-white rounded-xl">Confirm Settlement</button>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </Card>
-                                            ))}
-                                    </div>
-                                )}
-
-                            </div>
-                            <div className="p-4 border-t bg-gray-50 flex justify-end">
-                                <button onClick={() => handleDownloadAllClaimsReport(driverClaims)} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2 text-gray-700 shadow-sm"><Download className="w-4 h-4"/> Export Full Claims PDF</button>
-                            </div>
+                        </div>
+                        <div className="p-4 border-t bg-gray-50 flex justify-end">
+                            <button onClick={() => handleDownloadAllClaimsReport(driverClaims)} className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2 text-gray-700 shadow-sm"><Download className="w-4 h-4"/> Export Claims PDF</button>
+                        </div>
                     </Card>
                 </div>
             )}
