@@ -19,7 +19,7 @@ const isToday = (dateString: string) => {
     // Note: The date comparison is based on midnight (00:00:00) of the trip date vs. today's date.
     const tripDateTime = new Date(dateString).setHours(0, 0, 0, 0);
     const today = new Date().setHours(0, 0, 0, 0);
-    return tripDateTime <= today;
+    return tripDateTime === today;
 };
 
 // CRITICAL: Helper to determine if a trip should be displayed.

@@ -94,9 +94,10 @@ export function Footer() {
             
             {/* Copyright & Tagline */}
             <div className="text-center md:text-left flex flex-col md:flex-row gap-1 md:gap-2">
-              <span className="font-medium">&copy; {new Date().getFullYear()} Carlos Embellishers (Pvt) Ltd. All Rights Reserved.</span>
+              <span className="font-medium">&copy; {new Date().getFullYear()} Carlos Embellishers (Pvt) Ltd. All Rights Reserved.  </span>
               <span className="hidden md:inline text-gray-300">|</span>
               <span className="text-gray-400">Safe & Reliable Transport Service</span>
+              <span className="font-semibold"><a href="https://www.linkedin.com/in/lakruwan-shashika/" target="_blank">Developed by Lakruwan Shashika</a></span>
             </div>
 
             {/* Links */}
